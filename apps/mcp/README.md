@@ -4,7 +4,9 @@ Standalone Node 22/pnpm server for the ten Noa Court MCP tools, wallet sign link
 
 ## Run
 
-From `apps/mcp`: `pnpm install`, `pnpm build`, `pnpm test`, then `pnpm start` (or `pnpm dev`). Configuration is read from the repository `.env` and process env; see `.env.example`. `/healthz` and `/mcp` listen on `127.0.0.1:3310` by default. The keeper starts when `KEEPER_ENABLED=1`.
+From `apps/mcp`: `pnpm install`, `pnpm build`, `pnpm test`, then `pnpm start` (or `pnpm dev`). Configuration is read from the repository `.env` and process env; see `.env.example`. `/healthz` and `/mcp` listen on `127.0.0.1:3310` by default. The keeper starts when `KEEPER_ENABLED=1`. Default testnet RPCs are FastNEAR, NEAR testnet, and NEAR archival; custom endpoints can be set with `NEAR_RPC_URLS`.
+
+`GET` and `HEAD /fixtures/:name` serve files from `DATA_DIR/fixtures` with no caching. Allowed file extensions are `.json`, `.xml`, `.rss`, `.html`, and `.txt`. Files can be edited on disk without restarting the server; the route has a separate 600 requests/minute/IP limit and no write endpoint.
 
 The tools are `court_guide`, `catalog_list`, `catalog_tool`, `source_sample`, `spec_lint`, `spec_simulate`, `rules_render`, `market_create_link`, `market_status`, and `verdict_get`. `market_create_link` stores a 24-hour request in `data/mcp.sqlite` and returns a QR sign URL. `/sign/<id>` uses wallet-selector with Intear, Meteor, and MyNearWallet on testnet.
 
@@ -13,6 +15,7 @@ The keeper's normal permissionless calls are Court `link_market`, `trigger`, `tr
 Rejected market links are cached in `data/mcp.sqlite`: permanent Court validation failures stop further link attempts; temporary failures retry after 5, 15, and 60 minutes, then stop. Unlinked markets past their resolution deadline are sent to `void_unlinked` when Court supports it. An unsupported method pauses these probes for one hour.
 
 Keeper `trigger` and `trigger_request` attach 300 TGas to cover the OutLayer execution request and Court callbacks.
+They wait until `observation.at` plus `TRIGGER_GRACE_SECONDS` (70 seconds by default), and still respect Court's later `retry_at_ns` when present.
 
 ## Transaction builder
 

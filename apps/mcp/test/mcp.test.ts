@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Server } from "node:http";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "../src/config.js";
@@ -96,6 +96,65 @@ afterAll(async () => {
 });
 
 describe("MCP HTTP", () => {
+  it("serves fresh fixture GET and HEAD responses without cache validators", async () => {
+    const fixture = join(dir, "fixtures", "score.json");
+    writeFileSync(fixture, '{"score":1}');
+    const url = `${base}/fixtures/score.json`;
+    const first = await fetch(url);
+    expect(first.status).toBe(200);
+    expect(await first.text()).toBe('{"score":1}');
+    expect(first.headers.get("content-type")).toBe(
+      "application/json; charset=utf-8",
+    );
+    expect(first.headers.get("cache-control")).toBe("no-store, max-age=0");
+    expect(first.headers.get("cdn-cache-control")).toBe("no-store");
+    expect(first.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
+    expect(first.headers.get("pragma")).toBe("no-cache");
+    expect(first.headers.get("etag")).toBeNull();
+    expect(first.headers.get("last-modified")).toBeNull();
+    writeFileSync(fixture, '{"score":2}');
+    const second = await fetch(url, {
+      headers: {
+        "if-none-match": "*",
+        "if-modified-since": "Wed, 01 Jan 2100 00:00:00 GMT",
+      },
+    });
+    expect(second.status).toBe(200);
+    expect(await second.text()).toBe('{"score":2}');
+    const head = await fetch(url, { method: "HEAD" });
+    expect(head.status).toBe(200);
+    expect(head.headers.get("content-length")).toBe(
+      String('{"score":2}'.length),
+    );
+    expect(await head.text()).toBe("");
+    for (const [extension, type] of [
+      ["xml", "application/xml"],
+      ["rss", "application/rss+xml"],
+      ["html", "text/html"],
+      ["txt", "text/plain"],
+    ]) {
+      writeFileSync(join(dir, "fixtures", `sample.${extension}`), "sample");
+      const response = await fetch(`${base}/fixtures/sample.${extension}`);
+      expect(response.headers.get("content-type")).toBe(
+        `${type}; charset=utf-8`,
+      );
+    }
+  });
+  it("rejects invalid fixture names, unsupported types, and escaping symlinks", async () => {
+    const outside = join(dir, "outside.txt");
+    writeFileSync(outside, "private");
+    symlinkSync(outside, join(dir, "fixtures", "escape.txt"));
+    for (const name of [
+      ".hidden.json",
+      "..",
+      "bad%2Fname.json",
+      "score.exe",
+      "missing.json",
+      "escape.txt",
+    ]) {
+      expect((await fetch(`${base}/fixtures/${name}`)).status).toBe(404);
+    }
+  });
   it("reports WASM health without exposing the local path", async () => {
     const response = await fetch(`${base}/healthz`);
     expect(response.status).toBe(200);
@@ -228,6 +287,12 @@ describe("MCP HTTP", () => {
     expect(((await response.json()) as any).error.message).toContain(
       "Rate limited",
     );
+    writeFileSync(join(cfg.dataDir, "fixtures", "public.txt"), "available");
+    const fixtureResponse = await fetch(
+      `http://127.0.0.1:${(s.address() as { port: number }).port}/fixtures/public.txt`,
+    );
+    expect(fixtureResponse.status).toBe(200);
+    expect(await fixtureResponse.text()).toBe("available");
     await new Promise<void>((resolve) => s.close(() => resolve()));
     local.close();
   });

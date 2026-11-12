@@ -24,7 +24,7 @@ export function loadConfig() {
     nearNetwork: env("NEAR_NETWORK", "testnet"),
     nearRpcUrls: env(
       "NEAR_RPC_URLS",
-      "https://test.rpc.fastnear.com,https://rpc.testnet.near.org,https://archival-rpc.testnet.near.org,https://near-testnet.lava.build",
+      "https://test.rpc.fastnear.com,https://rpc.testnet.near.org,https://archival-rpc.testnet.near.org",
     )
       .split(",")
       .map((s) => s.trim())
@@ -57,6 +57,7 @@ export function loadConfig() {
     dataDir: resolve(env("DATA_DIR", resolve(root, "apps/mcp/data"))),
     courtTrustedKeeper: env("COURT_TRUSTED_KEEPER", "0") === "1",
     keeperIntervalMs: number("KEEPER_INTERVAL_MS", 30000),
+    triggerGraceSeconds: number("TRIGGER_GRACE_SECONDS", 70),
     keeperEnabled: env("KEEPER_ENABLED", "1") === "1",
   };
 }

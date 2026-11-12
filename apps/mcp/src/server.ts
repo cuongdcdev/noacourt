@@ -1,5 +1,7 @@
 import express, { type Request } from "express";
-import { resolve } from "node:path";
+import { mkdirSync, realpathSync } from "node:fs";
+import { readFile, realpath, stat } from "node:fs/promises";
+import { resolve, sep } from "node:path";
 import QRCode from "qrcode";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -69,6 +71,13 @@ const ipOf = (req: Request) =>
   String(
     req.headers["cf-connecting-ip"] || req.socket.remoteAddress || "unknown",
   );
+const fixtureTypes: Record<string, string> = {
+  ".json": "application/json; charset=utf-8",
+  ".xml": "application/xml; charset=utf-8",
+  ".rss": "application/rss+xml; charset=utf-8",
+  ".html": "text/html; charset=utf-8",
+  ".txt": "text/plain; charset=utf-8",
+};
 
 export type ServerDeps = {
   rpc?: NearRpc;
@@ -93,6 +102,51 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
   const keeper = new KeeperLoop({ config, rpc, court, signer, wasm, spend });
   const requestLimit = new RateLimiter(config.rateLimitPerMin);
   const simulateLimit = new RateLimiter(config.simulateLimitPerMin);
+  const fixtureLimit = new RateLimiter(600);
+  const fixturesDir = resolve(config.dataDir, "fixtures");
+  mkdirSync(fixturesDir, { recursive: true });
+  const fixturesRealDir = realpathSync(fixturesDir);
+
+  app.get("/fixtures/:name", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store, max-age=0");
+    res.setHeader("CDN-Cache-Control", "no-store");
+    res.setHeader("Cloudflare-CDN-Cache-Control", "no-store");
+    res.setHeader("Pragma", "no-cache");
+    const limit = fixtureLimit.check(ipOf(req));
+    if (!limit.allowed) {
+      res.setHeader("Retry-After", String(limit.retryAfterSeconds));
+      res.status(429).end();
+      return;
+    }
+    const name = req.params.name;
+    if (!/^[a-z0-9._-]+$/.test(name) || name.startsWith(".")) {
+      res.status(404).end();
+      return;
+    }
+    const extension = name.slice(name.lastIndexOf("."));
+    const contentType = fixtureTypes[extension];
+    if (!contentType) {
+      res.status(404).end();
+      return;
+    }
+    try {
+      const filePath = await realpath(resolve(fixturesDir, name));
+      if (!filePath.startsWith(`${fixturesRealDir}${sep}`)) {
+        res.status(404).end();
+        return;
+      }
+      if (!(await stat(filePath)).isFile()) {
+        res.status(404).end();
+        return;
+      }
+      const contents = await readFile(filePath);
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Content-Length", String(contents.length));
+      res.status(200).end(req.method === "HEAD" ? undefined : contents);
+    } catch {
+      res.status(404).end();
+    }
+  });
 
   app.use(
     "/public",

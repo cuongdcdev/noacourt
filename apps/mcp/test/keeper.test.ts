@@ -16,6 +16,7 @@ import { SpendCounter } from "../src/ratelimit.js";
 import { DatabaseSync } from "node:sqlite";
 
 const t = 2_000_000_000_000_000_000n;
+const second = 1_000_000_000n;
 const market = {
   id: 1,
   status: "Active",
@@ -33,7 +34,7 @@ describe("keeper decisions", () => {
       "trigger",
       { status: "Linked", attempts: 0 },
       null,
-      t - 10n,
+      t - 71n * second,
       false,
       ["trigger"],
     ],
@@ -41,7 +42,7 @@ describe("keeper decisions", () => {
       "retry",
       { state: { RetryScheduled: { retry_at: (t - 1n).toString() } } },
       null,
-      t - 10n,
+      t - 71n * second,
       false,
       ["trigger"],
     ],
@@ -50,7 +51,7 @@ describe("keeper decisions", () => {
       "finalize",
       { state: "Resolved" },
       { dispute_deadline: (t - 1n).toString() },
-      t - 10n,
+      t - 71n * second,
       false,
       ["finalize_resolution"],
     ],
@@ -59,7 +60,7 @@ describe("keeper decisions", () => {
       "trusted",
       { state: "Pending" },
       null,
-      t - 10n,
+      t - 71n * second,
       true,
       ["submit_keeper_verdict"],
     ],
@@ -82,15 +83,79 @@ describe("keeper decisions", () => {
   });
   it("triggers generic requests only when due", () => {
     expect(
-      decideRequestActions({ status: "Linked" }, t, t - 1n, false, 3),
+      decideRequestActions({ status: "Linked" }, t, t - 70n * second, false, 3),
     ).toEqual(["trigger_request"]);
     expect(
       decideRequestActions({ status: "Linked" }, t, t + 1n, false, 3),
     ).toEqual([]);
     expect(
-      decideRequestActions({ status: "Pending" }, t, t - 1n, true, 3),
+      decideRequestActions({ status: "Pending" }, t, t - 70n * second, true, 3),
     ).toEqual(["submit_keeper_verdict"]);
   });
+  it.each([
+    ["before grace", t - 69n * second, null, false, []],
+    ["at grace", t - 70n * second, null, false, ["trigger"]],
+    ["retry later", t - 70n * second, t + 1n, false, []],
+    ["trusted before grace", t - 69n * second, null, true, []],
+    [
+      "trusted at grace",
+      t - 70n * second,
+      null,
+      true,
+      ["submit_keeper_verdict"],
+    ],
+  ])(
+    "market observation grace: %s",
+    (_name, observation, retryAt, trusted, expected) => {
+      const state = {
+        status: "Linked",
+        attempts: 0,
+        retry_at_ns: retryAt?.toString(),
+      };
+      expect(
+        decideMarketActions(
+          market,
+          state,
+          null,
+          t,
+          observation as bigint,
+          trusted as boolean,
+          3,
+        ),
+      ).toEqual(expected);
+    },
+  );
+  it.each([
+    ["before grace", t - 69n * second, null, false, []],
+    ["at grace", t - 70n * second, null, false, ["trigger_request"]],
+    ["retry later", t - 70n * second, t + 1n, false, []],
+    ["trusted before grace", t - 69n * second, null, true, []],
+    [
+      "trusted at grace",
+      t - 70n * second,
+      null,
+      true,
+      ["submit_keeper_verdict"],
+    ],
+  ])(
+    "request observation grace: %s",
+    (_name, observation, retryAt, trusted, expected) => {
+      const state = {
+        status: "Linked",
+        attempts: 0,
+        retry_at_ns: retryAt?.toString(),
+      };
+      expect(
+        decideRequestActions(
+          state,
+          t,
+          observation as bigint,
+          trusted as boolean,
+          3,
+        ),
+      ).toEqual(expected);
+    },
+  );
   it("honors attempt caps, forwarding, and void_pending", () => {
     expect(
       decideMarketActions(
@@ -387,7 +452,9 @@ describe("keeper tick", () => {
     const court = {
       market: vi.fn(async () => linked),
       request: vi.fn(async (id: string) => (id === "req:1" ? linked : null)),
-      spec: vi.fn(async () => ({ observation_at_ns: (t - 1n).toString() })),
+      spec: vi.fn(async () => ({
+        observation_at_ns: (t - 71n * second).toString(),
+      })),
     } as unknown as CourtClient;
     const signer = {
       send: vi.fn(async () => ({
@@ -471,7 +538,9 @@ describe("keeper tick", () => {
         spec_hash: "spec",
         attempts: 0,
       })),
-      spec: vi.fn(async () => ({ observation_at_ns: (t - 1n).toString() })),
+      spec: vi.fn(async () => ({
+        observation_at_ns: (t - 71n * second).toString(),
+      })),
       request: vi.fn(async () => null),
     } as unknown as CourtClient;
     const signer = {
@@ -525,7 +594,7 @@ describe("keeper tick", () => {
       })),
       spec: vi.fn(async () => ({
         spec_json: specJson,
-        observation_at_ns: (t - 1n).toString(),
+        observation_at_ns: (t - 71n * second).toString(),
       })),
       request: vi.fn(async () => null),
       refresh: vi.fn(async () => null),

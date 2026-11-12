@@ -25,6 +25,7 @@ export function decideMarketActions(
   observationAtNs: bigint | null,
   trusted = false,
   maxAttempts: number | null = null,
+  graceSeconds = 70,
 ): KeeperAction[] {
   if (String(noa.status) !== "Active") return [];
   if (pending)
@@ -54,7 +55,8 @@ export function decideMarketActions(
     return [];
   if (
     observationAtNs === null ||
-    nowNs < observationAtNs ||
+    nowNs <
+      observationAtNs + BigInt(Math.round(graceSeconds * 1_000_000_000)) ||
     nowNs < court.retryAtNs
   )
     return [];
@@ -78,12 +80,14 @@ export function decideRequestActions(
   observationAtNs: bigint | null,
   trusted = false,
   maxAttempts: number | null = null,
+  graceSeconds = 70,
 ): KeeperAction[] {
   const court = normalizeCourtItem(courtRaw);
   if (
     !court ||
     observationAtNs === null ||
-    nowNs < observationAtNs ||
+    nowNs <
+      observationAtNs + BigInt(Math.round(graceSeconds * 1_000_000_000)) ||
     nowNs < court.retryAtNs
   )
     return [];

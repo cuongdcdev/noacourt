@@ -17,6 +17,20 @@ const config = () => ({
 });
 
 describe("infrastructure", () => {
+  it("uses the three default RPC endpoints and a 70-second trigger grace", () => {
+    vi.stubEnv("NEAR_RPC_URLS", "");
+    vi.stubEnv("TRIGGER_GRACE_SECONDS", "");
+    try {
+      expect(loadConfig().nearRpcUrls).toEqual([
+        "https://test.rpc.fastnear.com",
+        "https://rpc.testnet.near.org",
+        "https://archival-rpc.testnet.near.org",
+      ]);
+      expect(loadConfig().triggerGraceSeconds).toBe(70);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
   it("rotates RPCs and throws a typed error when all fail", async () => {
     const calls: string[] = [];
     const request = vi.fn(async (url: string | URL | Request) => {

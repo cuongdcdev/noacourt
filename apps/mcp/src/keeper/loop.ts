@@ -286,6 +286,7 @@ export class KeeperLoop {
       observationNs(spec),
       this.deps.config.courtTrustedKeeper,
       maxAttempts,
+      this.deps.config.triggerGraceSeconds,
     )) {
       if (
         action === "link_market" &&
@@ -353,6 +354,7 @@ export class KeeperLoop {
       observationNs(spec),
       this.deps.config.courtTrustedKeeper,
       maxAttempts,
+      this.deps.config.triggerGraceSeconds,
     ))
       await this.act(action, id, item, spec, { request_id: id });
   }
