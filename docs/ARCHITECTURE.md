@@ -85,7 +85,7 @@ Tools that produce specs MUST emit canonical JSON (RFC 8785 JCS) so the same spe
 | `equals` | `value` (string/decimal/bool) | `"true"` / `"false"` |
 | `bool` | — (extracted value must be bool) | `"true"` / `"false"` |
 | `change` | `tie` outcome name; compares value at `at` vs `baseline_at` | `"up"` / `"down"` / `"tie"` |
-| `text_judge` | `question`, `yes_criteria[]`, `no_criteria[]`, `default_if_no_evidence` ("No"), `window {from,to}` | `"yes"` / `"no"` |
+| `text_judge` | `question`, `yes_criteria[]`, `no_criteria[]`, `default_if_no_evidence` (lowercase `"no"` / `"yes"`, a key of outcome_map), `window {from,to}` | `"yes"` / `"no"` |
 
 ### Tools (catalog v1)
 
@@ -97,7 +97,7 @@ Tools that produce specs MUST emit canonical JSON (RFC 8785 JCS) so the same spe
 | `coingecko_price` | `id`, `vs` | day-level only (no minute granularity on free API) |
 | `near_view` | `network`, `contract`, `method`, `args`, `rpcs` (≥2, must agree) | uses block at/after `at` when `mode = historical` is not possible → `first_fetch_after` |
 | `github_repo` | `owner`, `repo`, `field` (stargazers_count…); identity assert on repo `id` | snapshot |
-| `http_json` | see SESSION_HANDOFF §6 (`request`, `expect.assert[]`, `identity`, `extract.path` RFC 9535, no positional index, `type`, `decimals`, `sanity`) | core tool |
+| `http_json` | see SESSION_HANDOFF §6 (`request`, `expect.assert[]`, `identity`, `extract.path` RFC 9535, no positional index unless `extract.allow_index: true` + `index_reason`, `type`, `decimals`, `sanity`) | core tool |
 | `rss_feed` | `url`, item filter (window) | evidence for text_judge |
 | `web_text` | `url` (static HTML, scripts/tags stripped) | evidence for text_judge |
 
@@ -105,7 +105,7 @@ Source `label`: `verified` when the host is in the verified list (Binance api + 
 OKX, Coinbase, CoinGecko, api.github.com, NEAR RPC), else `self_declared` (shown in rules and receipt).
 
 ### Lint rules (code, run by MCP, CLI and resolver mode=lint)
-observation.at after market close; buckets cover the line without overlap; snapshot tools need
+observation.at after market close; bucket edges strictly ascending (buckets [e(i-1), e(i)) therefore cover the line without overlap); snapshot tools need
 `max_delay`; price markets need ≥2 sources; `http_json` needs ≥1 identity assert or `identity: "url_only"`;
 outcome_map covers every decide result; `change` needs `baseline_at < at`; outcomes 2..10.
 
@@ -154,6 +154,8 @@ link_market(market_id, spec_hash: Option<String>) -> Promise
 trigger(market_id) -> Promise                        // permissionless; observation reached, no pending req
 on_verdict(...) #[private]                           // OutLayer callback; parses Verdict; checks spec_hash
 void(market_id) -> Promise                           // permissionless; after Noa resolution_deadline, if unresolvable
+void_unlinked(market_id) -> Promise                  // permissionless; market has resolver = Court but no linked spec, past deadline → Noa.void_market
+get_credits(spec_hash, account_id) -> u32            // prepaid credits are per payer; link spends a credit of market.creator
 request_resolution(spec_json, callback: Option<{contract_id, method}>) payable -> request_id   // generic
 trigger_request(request_id)                          // permissionless, generic
 views: get_spec(spec_hash), get_market(market_id), get_request(request_id), get_verdict(request_id|"noa:<id>"),
@@ -161,7 +163,7 @@ views: get_spec(spec_hash), get_market(market_id), get_request(request_id), get_
 owner: set_trusted_keeper(Option<AccountId>)  // TESTNET-ONLY fallback, see below
        set_resolver_source, set_secrets_ref, set_min_deposit, withdraw(token, amount) → treasury
 ```
-States per market/request: `Registered → Pending(attempt) → {Resolved | RetryScheduled(t) | Unresolvable} → Voided`.
+States per market/request: `Linked → Pending(attempt) → {Resolved | RetryScheduled(t) | Unresolvable} → Voided`.
 Testnet-only fallback: if `trusted_keeper` is set, that account may call `submit_keeper_verdict(id, verdict_json)`;
 the stored verdict gets `"tee": false` and receipts show "not TEE-attested". Must be unset (None) for mainnet.
 
