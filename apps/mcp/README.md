@@ -10,6 +10,8 @@ The tools are `court_guide`, `catalog_list`, `catalog_tool`, `source_sample`, `s
 
 The keeper's normal permissionless calls are Court `link_market`, `trigger`, `trigger_request`, `retry_forward`, `void`, and Noa `finalize_resolution`. `submit_keeper_verdict` is used only with `COURT_TRUSTED_KEEPER=1`. Its receipt is marked `tee: false` by Court.
 
+Keeper `trigger` and `trigger_request` attach 300 TGas to cover the OutLayer execution request and Court callbacks.
+
 ## Transaction builder
 
 Import `buildCreateMarketTxs` and `parseCreateMarketResult` from `src/lib.ts` or the built package entry. The builder converts NPOINT stake amounts with integer decimal math. If the account's Noa internal balance is insufficient, it adds `ft_transfer_call` before Court registration and Noa creation. The live signer plan reads Court's `min_deposit`, Noa's `market_creation_fee`, fee exemption, and internal balance through the rotating RPC client.
@@ -18,4 +20,4 @@ Noa currently charges 0.5 NEAR plus measured storage to non-exempt creators and 
 
 ## Deploy
 
-`scripts/start.sh` starts a restart loop with `data/server.pid` and `data/server.log`; `scripts/stop.sh` stops only that PID. `scripts/tunnel-start.sh` and `scripts/tunnel-stop.sh` use only `/root/.cloudflared/noacourt-mcp.yml` and `data/tunnel.pid`. Create the named tunnel/config separately before starting it. No tunnel is created by this package.
+`scripts/start.sh` starts a restart loop with `data/server.pid` and `data/server.log`; `scripts/stop.sh` stops only that PID. `scripts/tunnel-start.sh` runs `tunnel-run-forever.sh` with a restart backoff and stores the wrapper PID in `data/tunnel.pid`; `scripts/tunnel-stop.sh` stops only that wrapper or a legacy direct tunnel process. Both use only `/root/.cloudflared/noacourt-mcp.yml`. Create the named tunnel/config separately before starting it. No tunnel is created by this package.

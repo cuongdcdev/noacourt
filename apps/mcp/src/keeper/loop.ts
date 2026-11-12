@@ -367,12 +367,12 @@ export class KeeperLoop {
         trigger: {
           receiverId: this.deps.config.courtContract,
           methodName: "trigger",
-          gasTgas: 220,
+          gasTgas: 300,
         },
         trigger_request: {
           receiverId: this.deps.config.courtContract,
           methodName: "trigger_request",
-          gasTgas: 220,
+          gasTgas: 300,
         },
         retry_forward: {
           receiverId: this.deps.config.courtContract,

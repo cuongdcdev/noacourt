@@ -155,6 +155,53 @@ describe("keeper decisions", () => {
 
 describe("keeper tick", () => {
   const temp = () => mkdtempSync(join(tmpdir(), "noacourt-keeper-"));
+  it("attaches 300 TGas to market and request triggers", async () => {
+    const config = {
+      ...loadConfig(),
+      dataDir: temp(),
+      courtContract: "court.testnet",
+      noaContract: "noa.testnet",
+    };
+    const rpc = {
+      view: vi.fn(async (_contract: string, method: string) => {
+        if (method === "get_market_count") return 1;
+        if (method === "get_markets") return [market];
+        if (method === "get_market") return market;
+        return null;
+      }),
+    } as unknown as NearRpc;
+    const linked = { status: "Linked", spec_hash: "spec", attempts: 0 };
+    const court = {
+      market: vi.fn(async () => linked),
+      request: vi.fn(async (id: string) => (id === "req:1" ? linked : null)),
+      spec: vi.fn(async () => ({ observation_at_ns: (t - 1n).toString() })),
+    } as unknown as CourtClient;
+    const signer = {
+      send: vi.fn(async () => ({
+        txHash: "hash",
+        outcome: { status: { SuccessValue: "" } },
+      })),
+    } as unknown as Pick<KeeperSigner, "send">;
+    const spend = new SpendCounter(config);
+    const keeper = new KeeperLoop({
+      config,
+      rpc,
+      court,
+      signer,
+      wasm: new WasmRunner(config),
+      spend,
+      now: () => Number(t / 1_000_000n),
+    });
+    await keeper.tick();
+    expect(signer.send).toHaveBeenCalledWith(
+      expect.objectContaining({ methodName: "trigger", gasTgas: 300 }),
+    );
+    expect(signer.send).toHaveBeenCalledWith(
+      expect.objectContaining({ methodName: "trigger_request", gasTgas: 300 }),
+    );
+    keeper.stop();
+    spend.close();
+  });
   it("survives a throwing RPC without crashing", async () => {
     const config = {
       ...loadConfig(),

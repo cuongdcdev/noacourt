@@ -295,11 +295,9 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
       ok: true,
       version: "0.1.0",
       wasm: {
-        path: config.resolverWasm,
         sha256: hash,
         published_sha256: published,
-        matches_published_resolver:
-          hash && published ? hash === published : null,
+        match: hash && published ? hash === published : null,
         available: !!hash,
       },
       court_resolver_sha256: resolver.hash,

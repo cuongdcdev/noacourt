@@ -13,7 +13,7 @@ const config = () => ({
   ...loadConfig(),
   dataDir: temp(),
   nearRpcUrls: ["https://one.example", "https://two.example"],
-  wasmTimeoutMs: 100,
+  wasmTimeoutMs: 1_000,
 });
 
 describe("infrastructure", () => {

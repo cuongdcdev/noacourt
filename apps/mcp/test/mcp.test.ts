@@ -96,6 +96,24 @@ afterAll(async () => {
 });
 
 describe("MCP HTTP", () => {
+  it("reports WASM health without exposing the local path", async () => {
+    const response = await fetch(`${base}/healthz`);
+    expect(response.status).toBe(200);
+    const health = (await response.json()) as any;
+    expect(health.wasm).not.toHaveProperty("path");
+    expect(health.wasm).toMatchObject({
+      available: true,
+      sha256: expect.stringMatching(/^sha256:/),
+    });
+    expect(health.wasm).toHaveProperty("published_sha256");
+    expect(health.wasm).toHaveProperty("match");
+    expect(Object.keys(health.wasm).sort()).toEqual([
+      "available",
+      "match",
+      "published_sha256",
+      "sha256",
+    ]);
+  });
   it("initializes and lists exactly ten tools with input schemas", async () => {
     const init = await post({
       jsonrpc: "2.0",

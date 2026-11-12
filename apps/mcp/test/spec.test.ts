@@ -1,10 +1,24 @@
 import { describe, it, expect } from "vitest";
 import { renderRules } from "../src/spec/render.js";
 import { prelint } from "../src/spec/prelint.js";
-import { examples } from "../src/guide.js";
+import { courtGuide, examples, makeExamples } from "../src/guide.js";
 import { sha256 } from "../src/spec/canonical.js";
 
 describe("canonical rules and prelint", () => {
+  it("generates lintable guide times relative to each request", () => {
+    const early = makeExamples(new Date("2026-11-12T09:00:01Z"));
+    const late = makeExamples(new Date("2026-11-12T09:02:01Z"));
+    expect(early.A1.observation.at).toBe("2026-11-12T09:11:00Z");
+    expect(late.A1.observation.at).toBe("2026-11-12T09:13:00Z");
+    expect(early.A8.decide.window).toEqual({
+      from: "2026-11-12T09:01:00Z",
+      to: "2026-11-12T09:11:00Z",
+    });
+    for (const spec of Object.values(early))
+      expect(prelint(spec).ok).toBe(true);
+    expect(courtGuide()).not.toContain("PLACEHOLDER");
+    expect(courtGuide()).toContain("replace them with your own source URLs");
+  });
   it("produces identical bytes and hashes regardless of key order", () => {
     const a = renderRules(examples.A1);
     const reversed = Object.fromEntries(Object.entries(examples.A1).reverse());

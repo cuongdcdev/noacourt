@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { loadConfig } from "../src/config.js";
 import { WasmRunner } from "../src/resolver/wasm.js";
 import { renderRules } from "../src/spec/render.js";
-import { examples } from "../src/guide.js";
+import { makeExamples } from "../src/guide.js";
 import {
   CourtClient,
   findResolverHash,
@@ -16,7 +16,7 @@ const available =
   existsSync(config.resolverWasm) && existsSync(config.wasmtimeBin);
 
 describe.skipIf(!available)("real resolver lint", () => {
-  it.each(Object.entries(examples))(
+  it.each(Object.entries(makeExamples()))(
     "accepts guide example %s",
     async (_name, spec) => {
       const verdict = (await new WasmRunner(config).run(
