@@ -8,7 +8,9 @@ From `apps/mcp`: `pnpm install`, `pnpm build`, `pnpm test`, then `pnpm start` (o
 
 The tools are `court_guide`, `catalog_list`, `catalog_tool`, `source_sample`, `spec_lint`, `spec_simulate`, `rules_render`, `market_create_link`, `market_status`, and `verdict_get`. `market_create_link` stores a 24-hour request in `data/mcp.sqlite` and returns a QR sign URL. `/sign/<id>` uses wallet-selector with Intear, Meteor, and MyNearWallet on testnet.
 
-The keeper's normal permissionless calls are Court `link_market`, `trigger`, `trigger_request`, `retry_forward`, `void`, and Noa `finalize_resolution`. `submit_keeper_verdict` is used only with `COURT_TRUSTED_KEEPER=1`. Its receipt is marked `tee: false` by Court.
+The keeper's normal permissionless calls are Court `link_market`, `trigger`, `trigger_request`, `retry_forward`, `void`, `void_unlinked`, and Noa `finalize_resolution`. `submit_keeper_verdict` is used only with `COURT_TRUSTED_KEEPER=1`. Its receipt is marked `tee: false` by Court.
+
+Rejected market links are cached in `data/mcp.sqlite`: permanent Court validation failures stop further link attempts; temporary failures retry after 5, 15, and 60 minutes, then stop. Unlinked markets past their resolution deadline are sent to `void_unlinked` when Court supports it. An unsupported method pauses these probes for one hour.
 
 Keeper `trigger` and `trigger_request` attach 300 TGas to cover the OutLayer execution request and Court callbacks.
 

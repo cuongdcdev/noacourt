@@ -13,6 +13,7 @@ import type { CourtClient } from "../src/court/client.js";
 import type { KeeperSigner } from "../src/near/signer.js";
 import { WasmRunner } from "../src/resolver/wasm.js";
 import { SpendCounter } from "../src/ratelimit.js";
+import { DatabaseSync } from "node:sqlite";
 
 const t = 2_000_000_000_000_000_000n;
 const market = {
@@ -26,6 +27,7 @@ const market = {
 describe("keeper decisions", () => {
   it.each([
     ["unlinked", null, null, t - 10n, false, ["link_market"]],
+    ["unlinked past deadline", null, null, t - 10n, false, ["void_unlinked"]],
     ["not yet due", { state: "Linked" }, null, t + 10n, false, []],
     [
       "trigger",
@@ -63,7 +65,7 @@ describe("keeper decisions", () => {
     ],
   ])("%s", (_name, court, pending, observation, trusted, expected) => {
     const noa =
-      _name === "void"
+      _name === "void" || _name === "unlinked past deadline"
         ? { ...market, resolution_deadline: (t - 1n).toString() }
         : market;
     expect(
@@ -155,6 +157,217 @@ describe("keeper decisions", () => {
 
 describe("keeper tick", () => {
   const temp = () => mkdtempSync(join(tmpdir(), "noacourt-keeper-"));
+  const baseMs = Number(t / 1_000_000n);
+  const minute = 60_000;
+  const rejectionResult = (reason: string) => ({
+    txHash: "rejected-hash",
+    outcome: {
+      status: { SuccessValue: Buffer.from("false").toString("base64") },
+      receipts_outcome: [
+        {
+          outcome: {
+            logs: [
+              `EVENT_JSON:${JSON.stringify({ event: "link_rejected", data: [{ market_id: 1, reason }] })}`,
+            ],
+          },
+        },
+      ],
+    },
+  });
+  function unlinkedHarness(
+    dataDir: string,
+    clock: { now: number },
+    send: (call: { methodName: string; gasTgas: number }) => Promise<unknown>,
+    deadlineMs = baseMs + 24 * 60 * minute,
+  ) {
+    const config = {
+      ...loadConfig(),
+      dataDir,
+      courtContract: "court.testnet",
+      noaContract: "noa.testnet",
+    };
+    const noa = {
+      ...market,
+      resolution_deadline: String(BigInt(deadlineMs) * 1_000_000n),
+    };
+    const rpc = {
+      view: vi.fn(async (_contract: string, method: string) => {
+        if (method === "get_market_count") return 1;
+        if (method === "get_markets") return [noa];
+        if (method === "get_market") return noa;
+        return null;
+      }),
+    } as unknown as NearRpc;
+    const court = {
+      market: vi.fn(async () => null),
+      request: vi.fn(async () => null),
+    } as unknown as CourtClient;
+    const signer = { send: vi.fn(send) } as unknown as Pick<
+      KeeperSigner,
+      "send"
+    >;
+    const spend = new SpendCounter(config);
+    const keeper = new KeeperLoop({
+      config,
+      rpc,
+      court,
+      signer,
+      wasm: new WasmRunner(config),
+      spend,
+      now: () => clock.now,
+    });
+    return {
+      keeper,
+      court,
+      signer,
+      close: () => {
+        keeper.stop();
+        spend.close();
+      },
+    };
+  }
+
+  it.each([
+    "wrong resolver",
+    "outcomes mismatch",
+    "expiration after observation",
+    "metadata spec_hash mismatch",
+    "invalid market deadline",
+    "market is not Active",
+    "metadata is not noacourt and no spec_hash supplied",
+    "explicit spec_hash requires market creator",
+  ])("persists permanent link rejection: %s", async (reason) => {
+    const dir = temp();
+    const clock = { now: baseMs };
+    const send = vi.fn(async () => rejectionResult(reason));
+    const first = unlinkedHarness(dir, clock, send);
+    for (let i = 0; i < 5; i++) await first.keeper.tick();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(first.keeper.counts.link_rejections_permanent).toBe(1);
+    first.close();
+    const restarted = unlinkedHarness(dir, clock, send);
+    for (let i = 0; i < 5; i++) await restarted.keeper.tick();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(restarted.keeper.counts.link_rejections_permanent).toBe(1);
+    restarted.close();
+  });
+
+  it.each([
+    "spec not registered",
+    "creator has no credit",
+    "unknown callback reason",
+  ])("backs off and eventually stops retrying: %s", async (reason) => {
+    const dir = temp();
+    const clock = { now: baseMs };
+    const send = vi.fn(async () => rejectionResult(reason));
+    const harness = unlinkedHarness(dir, clock, send);
+    const runAt = async (minutes: number, count: number) => {
+      clock.now = baseMs + minutes * minute;
+      await harness.keeper.tick();
+      expect(send).toHaveBeenCalledTimes(count);
+    };
+    await runAt(0, 1);
+    await runAt(4, 1);
+    await runAt(5, 2);
+    await runAt(19, 2);
+    await runAt(20, 3);
+    await runAt(79, 3);
+    await runAt(80, 4);
+    await runAt(200, 4);
+    expect(harness.keeper.counts.link_rejections_permanent).toBe(1);
+    harness.close();
+    const db = new DatabaseSync(join(dir, "mcp.sqlite"));
+    const row = db
+      .prepare(
+        "SELECT attempts, permanent FROM keeper_link_rejections WHERE market_id = 1",
+      )
+      .get() as { attempts: number; permanent: number };
+    expect(row).toEqual({ attempts: 4, permanent: 1 });
+    db.close();
+  });
+
+  it("backs off a failed link transaction without crashing", async () => {
+    const dir = temp();
+    const clock = { now: baseMs };
+    const send = vi.fn(async () => {
+      throw new Error("RPC unavailable: expiration after observation");
+    });
+    const harness = unlinkedHarness(dir, clock, send);
+    await expect(harness.keeper.tick()).resolves.toBeUndefined();
+    await harness.keeper.tick();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(harness.keeper.counts.link_rejections_pending).toBe(1);
+    harness.close();
+  });
+
+  it("refreshes on already linked without caching a rejection", async () => {
+    const dir = temp();
+    const clock = { now: baseMs };
+    const harness = unlinkedHarness(dir, clock, async () =>
+      rejectionResult("market already linked"),
+    );
+    await harness.keeper.tick();
+    await harness.keeper.tick();
+    expect((harness.court.market as any).mock.calls).toHaveLength(3);
+    expect((harness.signer.send as any).mock.calls).toHaveLength(1);
+    expect(harness.keeper.counts.link_rejections_permanent).toBe(0);
+    expect(harness.keeper.counts.link_rejections_pending).toBe(0);
+    harness.close();
+  });
+
+  it("voids an unlinked market after its deadline with 80 TGas", async () => {
+    const clock = { now: baseMs };
+    const send = vi.fn(async () => ({
+      txHash: "void-hash",
+      outcome: { status: { SuccessValue: "" } },
+    }));
+    const harness = unlinkedHarness(temp(), clock, send, baseMs - 1);
+    await harness.keeper.tick();
+    expect(send).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        methodName: "void_unlinked",
+        gasTgas: 80,
+        args: { market_id: 1 },
+      }),
+    );
+    harness.close();
+  });
+
+  it("suppresses unsupported void_unlinked for one hour, then probes again", async () => {
+    const clock = { now: baseMs };
+    const send = vi.fn(async () => {
+      throw new Error("MethodResolveError: MethodNotFound");
+    });
+    const harness = unlinkedHarness(temp(), clock, send, baseMs - 1);
+    await expect(harness.keeper.tick()).resolves.toBeUndefined();
+    expect(send).toHaveBeenCalledTimes(1);
+    clock.now += 59 * minute;
+    await harness.keeper.tick();
+    expect(send).toHaveBeenCalledTimes(1);
+    clock.now += minute;
+    await harness.keeper.tick();
+    expect(send).toHaveBeenCalledTimes(2);
+    harness.close();
+  });
+
+  it("persists backoff for other void_unlinked failures", async () => {
+    const dir = temp();
+    const clock = { now: baseMs };
+    const send = vi.fn(async () => {
+      throw new Error("RPC unavailable");
+    });
+    const first = unlinkedHarness(dir, clock, send, baseMs - 1);
+    await expect(first.keeper.tick()).resolves.toBeUndefined();
+    first.close();
+    const restarted = unlinkedHarness(dir, clock, send, baseMs - 1);
+    clock.now += 4 * minute;
+    await restarted.keeper.tick();
+    expect(send).toHaveBeenCalledTimes(1);
+    clock.now += minute;
+    await restarted.keeper.tick();
+    expect(send).toHaveBeenCalledTimes(2);
+    restarted.close();
+  });
   it("attaches 300 TGas to market and request triggers", async () => {
     const config = {
       ...loadConfig(),
@@ -253,7 +466,12 @@ describe("keeper tick", () => {
       }),
     } as unknown as NearRpc;
     const court = {
-      market: vi.fn(async () => null),
+      market: vi.fn(async () => ({
+        status: "Linked",
+        spec_hash: "spec",
+        attempts: 0,
+      })),
+      spec: vi.fn(async () => ({ observation_at_ns: (t - 1n).toString() })),
       request: vi.fn(async () => null),
     } as unknown as CourtClient;
     const signer = {
@@ -270,6 +488,7 @@ describe("keeper tick", () => {
       signer,
       wasm: new WasmRunner(config),
       spend,
+      now: () => Number(t / 1_000_000n),
     });
     await keeper.tick();
     await keeper.tick();

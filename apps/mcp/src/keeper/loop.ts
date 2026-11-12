@@ -19,6 +19,7 @@ import {
   decideRequestActions,
   type KeeperAction,
 } from "./decision.js";
+import { classifyLinkRejection, RejectionStore } from "./rejections.js";
 
 export type KeeperDeps = {
   config: Config;
@@ -32,6 +33,7 @@ export type KeeperDeps = {
 
 export class KeeperLoop {
   private db: DatabaseSync;
+  private rejections: RejectionStore;
   private activeMarkets = new Set<number>();
   private activeRequests = new Set<string>();
   private recent = new Map<string, number>();
@@ -40,6 +42,9 @@ export class KeeperLoop {
   private tickNumber = 0;
   private marketCursor: number;
   private requestCursor: number;
+  private voidUnsupportedUntilMs = 0;
+  private voidSuccessUntilMs = new Map<number, number>();
+  private linkedRefreshUntilMs = new Map<number, number>();
   lastTickAt: string | null = null;
   lastError: string | null = null;
   counts = {
@@ -48,6 +53,8 @@ export class KeeperLoop {
     active_requests: 0,
     actions: 0,
     errors: 0,
+    link_rejections_permanent: 0,
+    link_rejections_pending: 0,
   };
   constructor(private deps: KeeperDeps) {
     mkdirSync(deps.config.dataDir, { recursive: true });
@@ -61,6 +68,7 @@ export class KeeperLoop {
     this.db.exec(
       "CREATE TABLE IF NOT EXISTS keeper_active_requests (id TEXT PRIMARY KEY)",
     );
+    this.rejections = new RejectionStore(this.db);
     this.marketCursor = Number(
       (
         this.db
@@ -83,6 +91,19 @@ export class KeeperLoop {
       .prepare("SELECT id FROM keeper_active_requests")
       .all() as { id: string }[])
       this.activeRequests.add(row.id);
+    for (const id of this.rejections.permanentLinkMarketIds())
+      this.activeMarkets.add(id);
+    this.updateRejectionCounts();
+  }
+
+  private nowMs(): number {
+    return this.deps.now?.() ?? Date.now();
+  }
+
+  private updateRejectionCounts(): void {
+    const counts = this.rejections.linkCounts();
+    this.counts.link_rejections_permanent = counts.permanent;
+    this.counts.link_rejections_pending = counts.pending;
   }
 
   private log(action: string, fields: Record<string, unknown>) {
@@ -141,6 +162,8 @@ export class KeeperLoop {
       active_requests: this.activeRequests.size,
       actions: 0,
       errors: 0,
+      link_rejections_permanent: this.counts.link_rejections_permanent,
+      link_rejections_pending: this.counts.link_rejections_pending,
     };
     try {
       await this.scanMarkets().catch((error) =>
@@ -160,6 +183,7 @@ export class KeeperLoop {
     } catch (error) {
       this.error("tick", "", error);
     } finally {
+      this.updateRejectionCounts();
       this.lastTickAt = new Date().toISOString();
       this.running = false;
     }
@@ -183,7 +207,8 @@ export class KeeperLoop {
       for (const market of page)
         if (
           market.resolver === this.deps.config.courtContract &&
-          String(market.metadata_hash).startsWith("noacourt:") &&
+          (String(market.metadata_hash).startsWith("noacourt:") ||
+            this.rejections.get("link", Number(market.id))?.permanent === 1) &&
           market.status === "Active"
         ) {
           this.activeMarkets.add(Number(market.id));
@@ -220,7 +245,8 @@ export class KeeperLoop {
       "get_pending_resolution",
       { market_id: id },
     );
-    const nowNs = BigInt(this.deps.now?.() ?? Date.now()) * 1_000_000n;
+    const nowMs = this.nowMs();
+    const nowNs = BigInt(nowMs) * 1_000_000n;
     if (
       pending &&
       nowNs >
@@ -235,6 +261,11 @@ export class KeeperLoop {
     }
     const courtRaw = await this.deps.court.market(id);
     const court = normalizeCourtItem(courtRaw);
+    if (court) {
+      this.rejections.clear("link", id);
+      this.rejections.clear("void", id);
+      this.linkedRefreshUntilMs.delete(id);
+    }
     const spec = court?.specHash
       ? await this.deps.court.spec(court.specHash)
       : null;
@@ -256,6 +287,19 @@ export class KeeperLoop {
       this.deps.config.courtTrustedKeeper,
       maxAttempts,
     )) {
+      if (
+        action === "link_market" &&
+        (nowMs < (this.linkedRefreshUntilMs.get(id) ?? 0) ||
+          !this.rejections.canTry("link", id, nowMs))
+      )
+        continue;
+      if (
+        action === "void_unlinked" &&
+        (nowMs < this.voidUnsupportedUntilMs ||
+          nowMs < (this.voidSuccessUntilMs.get(id) ?? 0) ||
+          !this.rejections.canTry("void", id, nowMs))
+      )
+        continue;
       await this.act(action, `noa:${id}`, courtRaw, spec, { market_id: id });
     }
   }
@@ -302,7 +346,7 @@ export class KeeperLoop {
       configuredMax && requestedMax
         ? Math.min(configuredMax, requestedMax)
         : (configuredMax ?? requestedMax);
-    const nowNs = BigInt(this.deps.now?.() ?? Date.now()) * 1_000_000n;
+    const nowNs = BigInt(this.nowMs()) * 1_000_000n;
     for (const action of decideRequestActions(
       item,
       nowNs,
@@ -322,7 +366,12 @@ export class KeeperLoop {
   ) {
     const state = normalizeCourtItem(courtRaw);
     const key = `${action}:${id}:${state?.state}:${state?.attempt}`;
-    if (this.tickNumber - (this.recent.get(key) ?? -100) < 2) return;
+    if (
+      action !== "link_market" &&
+      action !== "void_unlinked" &&
+      this.tickNumber - (this.recent.get(key) ?? -100) < 2
+    )
+      return;
     this.recent.set(key, this.tickNumber);
     try {
       if (action === "submit_keeper_verdict") {
@@ -364,6 +413,11 @@ export class KeeperLoop {
           methodName: "link_market",
           gasTgas: 100,
         },
+        void_unlinked: {
+          receiverId: this.deps.config.courtContract,
+          methodName: "void_unlinked",
+          gasTgas: 80,
+        },
         trigger: {
           receiverId: this.deps.config.courtContract,
           methodName: "trigger",
@@ -404,14 +458,64 @@ export class KeeperLoop {
         action === "link_market" &&
         status?.SuccessValue &&
         Buffer.from(status.SuccessValue, "base64").toString("utf8") === "false"
-      )
-        throw new Error(
-          `Court link_market returned false: ${linkRejectionReason(sent.outcome) || "see link_rejected event"}`,
+      ) {
+        await this.rejectLink(
+          id,
+          linkRejectionReason(sent.outcome) ??
+            "link_market returned false without reason",
+          sent.txHash,
         );
+        return;
+      }
+      if (action === "link_market")
+        this.rejections.clear("link", Number(args.market_id));
+      if (action === "void_unlinked") {
+        this.rejections.clear("void", Number(args.market_id));
+        this.voidSuccessUntilMs.set(
+          Number(args.market_id),
+          this.nowMs() + 5 * 60_000,
+        );
+      }
       this.counts.actions++;
       this.log(action, { id, tx_hash: sent.txHash, result: "ok" });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (action === "link_market") {
+        await this.rejectLink(id, message, undefined, false);
+        return;
+      }
+      if (action === "void_unlinked") {
+        if (
+          /MethodNotFound|MethodResolveError|Contract method is not found/i.test(
+            message,
+          )
+        ) {
+          this.voidUnsupportedUntilMs = this.nowMs() + 60 * 60_000;
+          this.log(action, {
+            id,
+            result: "unsupported",
+            retry_at: new Date(this.voidUnsupportedUntilMs).toISOString(),
+          });
+          return;
+        }
+        const row = this.rejections.record(
+          "void",
+          Number(args.market_id),
+          message,
+          this.nowMs(),
+        );
+        this.log(action, {
+          id,
+          result: "rejected",
+          reason: message,
+          permanent: row.permanent === 1,
+          next_retry_at:
+            row.next_retry_at === null
+              ? null
+              : new Date(row.next_retry_at).toISOString(),
+        });
+        return;
+      }
       if (
         /already linked|not due|not triggerable|observation not reached/i.test(
           message,
@@ -420,5 +524,48 @@ export class KeeperLoop {
         this.log(action, { id, result: "skipped", error: message });
       else this.error(action, id, error);
     }
+  }
+
+  private async rejectLink(
+    id: string,
+    reason: string,
+    txHash?: string,
+    fromCallback = true,
+  ): Promise<void> {
+    const marketId = Number(id.slice("noa:".length));
+    const classification = fromCallback
+      ? classifyLinkRejection(reason)
+      : "retryable";
+    if (classification === "already_linked") {
+      this.rejections.clear("link", marketId);
+      const refreshed = await this.deps.court
+        .market(marketId)
+        .catch((error) => {
+          this.error("refresh_linked_market", id, error);
+          return null;
+        });
+      if (!refreshed)
+        this.linkedRefreshUntilMs.set(marketId, this.nowMs() + 5 * 60_000);
+      return;
+    }
+    const row = this.rejections.record(
+      "link",
+      marketId,
+      reason,
+      this.nowMs(),
+      classification === "permanent",
+    );
+    this.updateRejectionCounts();
+    this.log("link_market", {
+      id,
+      tx_hash: txHash,
+      result: "rejected",
+      reason,
+      permanent: row.permanent === 1,
+      next_retry_at:
+        row.next_retry_at === null
+          ? null
+          : new Date(row.next_retry_at).toISOString(),
+    });
   }
 }

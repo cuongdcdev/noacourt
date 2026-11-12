@@ -2,6 +2,7 @@ import { normalizeCourtItem } from "../court/client.js";
 
 export type KeeperAction =
   | "link_market"
+  | "void_unlinked"
   | "trigger"
   | "trigger_request"
   | "retry_forward"
@@ -31,7 +32,12 @@ export function decideMarketActions(
       ? ["finalize_resolution"]
       : [];
   const court = normalizeCourtItem(courtRaw);
-  if (!court) return ["link_market"];
+  if (!court) {
+    const deadline = ns(noa.resolution_deadline);
+    return deadline > 0n && nowNs > deadline
+      ? ["void_unlinked"]
+      : ["link_market"];
+  }
   const state = court.state.toLowerCase();
   const deadline = court.deadlineNs ?? ns(noa.resolution_deadline);
   if (state === "resolved" && court.forwarded === false && nowNs < deadline)

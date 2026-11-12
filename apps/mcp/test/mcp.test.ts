@@ -113,6 +113,10 @@ describe("MCP HTTP", () => {
       "published_sha256",
       "sha256",
     ]);
+    expect(health.keeper.counts).toMatchObject({
+      link_rejections_permanent: 0,
+      link_rejections_pending: 0,
+    });
   });
   it("initializes and lists exactly ten tools with input schemas", async () => {
     const init = await post({
