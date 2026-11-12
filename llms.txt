@@ -1,0 +1,34 @@
+# Noa Court
+
+> Noa Court is a testnet NEAR resolution service for prediction markets and other contracts. Agents draft a canonical ResolutionSpec, sample and preflight evidence with MCP, then a creator signs market transactions or a consumer requests a generic verdict. The Court contract stores specs and receipts, while the resolver fetches, extracts, and decides through OutLayer. The normal keeper only calls permissionless lifecycle methods. Testnet fallback receipts have `tee: false`; inspect each receipt.
+
+MCP (stateless Streamable HTTP, no auth, rate limited): https://noacourtmcp.junstudio.xyz/mcp
+Health: https://noacourtmcp.junstudio.xyz/healthz
+
+## Documentation
+
+- [README](https://github.com/cuongdcdev/noacourt/blob/main/README.md): start here, architecture and quick try.
+- [Integration guide](https://github.com/cuongdcdev/noacourt/blob/main/docs/INTEGRATE.md): generic requests, callbacks, Noa links, and MCP use.
+- [ResolutionSpec and Verdict reference](https://github.com/cuongdcdev/noacourt/blob/main/docs/SPEC.md): source grammar, lint, decisions, and examples.
+- [Architecture](https://github.com/cuongdcdev/noacourt/blob/main/docs/ARCHITECTURE.md): component contracts and trust split.
+- [E2E results](https://github.com/cuongdcdev/noacourt/blob/main/E2E_RESULTS.md): passing A1–A4 testnet receipts and independent checks; A6–A9 await fixture hosting.
+- [Court contract interface](https://github.com/cuongdcdev/noacourt/blob/main/contracts/court/README.md): exact arguments, gas, deposits, and states.
+
+## Testnet IDs
+
+- Court: `ai-resolver.noamarket.testnet`
+- Noa market: `v3.noamarket.testnet`
+- NPOINT token (18 decimals): `point.noamarket.testnet`
+- OutLayer: `outlayer.testnet`, project `court-ops.noamarket.testnet/court-resolver`
+- Court trigger calls: current OutLayer gas 200 TGas and execution limit 150 seconds; attach 300 TGas prepaid to `trigger` or `trigger_request` (minimum 265 TGas).
+- Pinned testnet resolver WASM SHA-256: `a8efb56c2f9fe31c2d857686d8b97179b15d8529a17984bfd31fc3f97ef6ce40`.
+
+## Live evidence
+
+- [A1 NEAR/USDT market 67](https://testnet.nearblocks.io/txns/GtfMBy2GmCKKNLjBGbNm7Wppf3VTnZ8ydB92bMrBsDWs): resolved No on attempt 2; `tee: true`, submitted by OutLayer. Query Court `get_verdict({"id":"noa:67"})` for the stored receipt.
+- [A2–A4 markets 68–70](https://github.com/cuongdcdev/noacourt/blob/main/E2E_RESULTS.md): Flat, Up, and Yes respectively; all `tee: true`.
+- [Generic `req:1`](https://testnet.nearblocks.io/txns/EwTtoX8cAJBDUZWJrYnKchPdbnkQa8dnNJCuxnoXwPrZ): request followed by [keeper trigger](https://testnet.nearblocks.io/txns/2FjTEHWCp6Um7Ro8NSgqGd4ukjz7i2qWAEsxJ1dtP9GA); resolved Yes, value `3.401`, attempt 2, `tee: true`.
+
+## Agent instructions
+
+Call `court_guide`, then `source_sample` for each source. Draft a spec with explicit timestamps, identity checks, fallback sources for price questions, and complete outcome mapping. Run `spec_lint`, `spec_simulate`, and `rules_render`; explain the sample values and rules to the creator. Use `market_create_link` only after the creator agrees to the market terms; the creator reviews and signs in their own wallet. For an existing market call `market_status` and `verdict_get`, and report the `tee` flag and evidence. For a non-Noa consumer, follow the generic `request_resolution` and callback guide. Noa core is closed source; Noa Court is the open-source component in this repository.

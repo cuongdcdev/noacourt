@@ -1,0 +1,23 @@
+{
+  "name": "@noacourt/e2e",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "e2e": "tsx src/runner.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx test/pure.test.ts"
+  },
+  "dependencies": {
+    "canonicalize": "^2.1.0",
+    "near-api-js-v7": "npm:near-api-js@7.5.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "prettier": "^3.10.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}
