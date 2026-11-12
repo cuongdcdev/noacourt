@@ -1,0 +1,15 @@
+# Owner-only notes and secrets
+private/
+.env
+.env.*
+!.env.example
+
+# Build / deps
+node_modules/
+target/
+dist/
+.next/
+
+# OS / editor
+.DS_Store
+*.log
