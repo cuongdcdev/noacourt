@@ -1,0 +1,21 @@
+[package]
+name = "resolver"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+court-core = { path = "../crates/court-core" }
+serde_json = { version = "1", features = ["arbitrary_precision"] }
+serde = { version = "1", features = ["derive"] }
+time = { version = "0.3", features = ["formatting", "parsing"] }
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "wasi"))'.dependencies]
+wasi = "0.13.3"
+url = "2.5"
+
+[target.'cfg(not(all(target_arch = "wasm32", target_os = "wasi")))'.dependencies]
+ureq = { version = "2.12", default-features = false, features = ["tls"] }
+
+[[bin]]
+name = "spike"
+path = "src/bin/spike.rs"
