@@ -9,5 +9,6 @@
 
 ## 3. Docs
 - [ ] 3.1 docs/SPEC.md, docs/INTEGRATE.md, llms.txt.
+- [ ] 3.1b Document the metadata_hash behaviour (owner request): the /sign page passes `metadata_hash = "noacourt:sha256:<spec_hash>"` to Noa `create_market`; Noa code is unchanged; Court.link_market is permissionless because of it; fallback = creator-only `link_market(id, spec_hash)` (extra signature); markets created elsewhere with another metadata_hash still work via the fallback. Put it in docs/INTEGRATE.md and README.md.
 - [ ] 3.2 README.md (do X → see Y), mention sibling project Fulfil (rules Q-015) and closed-source Noa core.
 - [ ] 3.3 MCP connector smoke from a real client (Claude Code `claude mcp add --transport http`), record transcript excerpt.
