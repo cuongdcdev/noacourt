@@ -1,0 +1,47 @@
+{
+  "name": "@noacourt/mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./dist/lib.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json && pnpm build:page",
+    "build:page": "esbuild src/sign/page/main.ts --bundle --format=esm --platform=browser --target=es2022 --alias:util=./node_modules/util/util.js --alias:buffer=./node_modules/buffer/index.js --outfile=dist/public/sign.js --minify",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.24.0",
+    "@near-wallet-selector/core": "^10.1.4",
+    "@near-wallet-selector/intear-wallet": "^10.1.4",
+    "@near-wallet-selector/meteor-wallet": "^10.1.4",
+    "@near-wallet-selector/modal-ui": "^10.1.4",
+    "@near-wallet-selector/my-near-wallet": "^10.1.4",
+    "buffer": "^6.0.3",
+    "canonicalize": "^2.1.0",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "near-api-js": "^6.5.1",
+    "near-api-js-v7": "npm:near-api-js@7.5.3",
+    "qrcode": "^1.5.4",
+    "util": "^0.12.5",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.5",
+    "@types/node": "^24.10.0",
+    "@types/qrcode": "^1.5.6",
+    "esbuild": "^0.28.2",
+    "prettier": "^3.10.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
