@@ -487,5 +487,94 @@ async fn court_lifecycles_and_gas() -> Result<()> {
         .await?
         .json()?;
     assert_eq!(record["tee"], false);
+
+    let linked_attempt = setup
+        .caller
+        .call(setup.court.id(), "void_unlinked")
+        .args_json(json!({"market_id":market_id}))
+        .gas(Gas::from_tgas(80))
+        .transact()
+        .await?;
+    assert!(linked_attempt.into_result().is_err());
+
+    let unlinked_hash = setup.register("void").await?;
+    let unlinked_deadline =
+        (SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos() as u64) + 20_000_000_000;
+    let unlinked_market = setup
+        .caller
+        .call(setup.noa.id(), "create_market")
+        .args_json(json!({
+            "title":"Closes after observation",
+            "metadata_hash":format!("noacourt:{unlinked_hash}"),
+            "outcomes":["Yes","No"],
+            "expiration_time":1_577_923_200_000_000_000u64,
+            "resolution_deadline":unlinked_deadline,
+            "resolver":setup.court.id()
+        }))
+        .transact()
+        .await?
+        .into_result()?
+        .json::<u64>()?;
+    let rejected_link = setup
+        .root
+        .call(setup.court.id(), "link_market")
+        .args_json(json!({"market_id":unlinked_market,"spec_hash":null}))
+        .gas(Gas::from_tgas(100))
+        .transact()
+        .await?
+        .into_result()?;
+    assert!(!rejected_link.json::<bool>()?);
+    assert!(rejected_link
+        .logs()
+        .iter()
+        .any(|line| line.contains("expiration after observation")));
+    let before_deadline = setup
+        .caller
+        .call(setup.court.id(), "void_unlinked")
+        .args_json(json!({"market_id":unlinked_market}))
+        .gas(Gas::from_tgas(80))
+        .transact()
+        .await?
+        .into_result()?;
+    assert!(!before_deadline.json::<bool>()?);
+    let market: Value = setup
+        .noa
+        .view("get_market")
+        .args_json(json!({"market_id":unlinked_market}))
+        .await?
+        .json()?;
+    assert_eq!(market["status"], "Active");
+    setup.worker.fast_forward(50).await?;
+    let voided = setup
+        .caller
+        .call(setup.court.id(), "void_unlinked")
+        .args_json(json!({"market_id":unlinked_market}))
+        .gas(Gas::from_tgas(80))
+        .transact()
+        .await?
+        .into_result()?;
+    println!(
+        "void_unlinked total gas burnt (Noa view, void and callbacks): {} TGas",
+        voided.total_gas_burnt.as_tgas()
+    );
+    assert!(
+        voided.json::<bool>()?,
+        "void_unlinked logs: {:?}",
+        voided.logs()
+    );
+    let market: Value = setup
+        .noa
+        .view("get_market")
+        .args_json(json!({"market_id":unlinked_market}))
+        .await?
+        .json()?;
+    assert_eq!(market["status"], "Void");
+    let court_item: Value = setup
+        .court
+        .view("get_market")
+        .args_json(json!({"market_id":unlinked_market}))
+        .await?
+        .json()?;
+    assert!(court_item.is_null());
     Ok(())
 }

@@ -430,6 +430,114 @@ fn failed_forward_can_be_voided_after_deadline() {
 }
 
 #[test]
+fn unlinked_void_callback_rejections() {
+    let mut court = court();
+    let mut info = market("sha256:unregistered");
+
+    info["resolver"] = json!(OTHER);
+    result(
+        T + 201 * SECOND,
+        PromiseResult::Successful(info.to_string().into_bytes()),
+    );
+    assert!(matches!(
+        court.on_unlinked_info(7),
+        PromiseOrValue::Value(false)
+    ));
+    assert!(get_logs()
+        .iter()
+        .any(|line| line.contains("wrong resolver")));
+    assert!(!function_calls()
+        .iter()
+        .any(|(_, method, _)| method == "void_market"));
+
+    info["resolver"] = json!(COURT);
+    info["status"] = json!("Void");
+    result(
+        T + 201 * SECOND,
+        PromiseResult::Successful(info.to_string().into_bytes()),
+    );
+    assert!(matches!(
+        court.on_unlinked_info(7),
+        PromiseOrValue::Value(false)
+    ));
+    assert!(get_logs()
+        .iter()
+        .any(|line| line.contains("market is not Active")));
+
+    info["status"] = json!("Active");
+    result(
+        T + 200 * SECOND,
+        PromiseResult::Successful(info.to_string().into_bytes()),
+    );
+    assert!(matches!(
+        court.on_unlinked_info(7),
+        PromiseOrValue::Value(false)
+    ));
+    assert!(get_logs()
+        .iter()
+        .any(|line| line.contains("resolution deadline not passed")));
+
+    result(
+        T + 201 * SECOND,
+        PromiseResult::Successful(b"null".to_vec()),
+    );
+    assert!(matches!(
+        court.on_unlinked_info(7),
+        PromiseOrValue::Value(false)
+    ));
+    assert!(get_logs()
+        .iter()
+        .any(|line| line.contains("market not found")));
+
+    let hash = register(&mut court, "void");
+    assert!(link(&mut court, &hash, market(&hash)));
+    set(OTHER, T + 201 * SECOND, 0);
+    assert!(panics(|| {
+        court.void_unlinked(7);
+    }));
+    result(
+        T + 201 * SECOND,
+        PromiseResult::Successful(info.to_string().into_bytes()),
+    );
+    assert!(matches!(
+        court.on_unlinked_info(7),
+        PromiseOrValue::Value(false)
+    ));
+    assert!(get_logs()
+        .iter()
+        .any(|line| line.contains("market already linked")));
+}
+
+#[test]
+fn unlinked_void_schedules_noa_with_one_yocto_and_no_state() {
+    let court = court();
+    let info = market("sha256:unregistered");
+    set(OTHER, T + 201 * SECOND, 0);
+    let before = env::storage_usage();
+    court.void_unlinked(7);
+    result(
+        T + 201 * SECOND,
+        PromiseResult::Successful(info.to_string().into_bytes()),
+    );
+    assert!(matches!(
+        court.on_unlinked_info(7),
+        PromiseOrValue::Promise(_)
+    ));
+    assert!(function_calls().iter().any(|(receiver, method, deposit)| {
+        receiver == NOA && method == "void_market" && *deposit == 1
+    }));
+    assert!(court.get_market(7).is_none());
+    assert_eq!(env::storage_usage(), before);
+
+    result(T + 202 * SECOND, PromiseResult::Successful(vec![]));
+    assert!(court.on_unlinked_voided(7));
+    assert!(get_logs()
+        .iter()
+        .any(|line| line.contains("\"event\":\"void_unlinked\"")));
+    assert!(court.get_market(7).is_none());
+}
+
+#[test]
 fn exhausted_attempts_deadline_and_stale_pending_callback() {
     let mut court = court();
     let hash = register(&mut court, "void");

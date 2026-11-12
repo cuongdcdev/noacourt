@@ -28,6 +28,7 @@ Amounts passed as `U128` are **decimal strings in yoctoNEAR**. Times in Noa mark
 | `trigger` | `{"market_id":42}` | 0 | 220 TGas at default configuration |
 | `retry_forward` | `{"market_id":42}` | 0 | 80 TGas |
 | `void` | `{"market_id":42}` | 0 | 80 TGas |
+| `void_unlinked` | `{"market_id":66}` | 0 | 80 TGas |
 | `request_resolution` | `{"spec_json":"{\"version\":1,\"outcomes\":[\"Yes\",\"No\"],\"observation\":{\"at\":\"2026-11-13T10:00:00Z\"},\"on_unavailable\":\"void\"}","callback":{"contract_id":"consumer.testnet","method":"on_court_verdict"}}` | Same rule as `register_spec` | 100 TGas |
 | `trigger_request` | `{"request_id":"req:1"}` | 0 | 220 TGas at default configuration |
 | `submit_keeper_verdict` | `{"id":"noa:42","verdict_json":"{\"v\":1,\"resolver_version\":\"0.1.0\",\"spec_hash\":\"sha256:<hex>\",\"mode\":\"resolve\",\"status\":\"resolved\",\"outcome\":\"Yes\",\"outcome_index\":0}"}` | 0 | 100 TGas |
@@ -50,6 +51,8 @@ All setters and `withdraw` are owner-only. `set_secrets_ref` and `set_trusted_ke
 `register_spec` gives one prepaid credit for the exact spec hash to the account that pays its deposit. `link_market` is permissionless, but consumes a credit belonging to the **Noa market creator**. It rejects a market whose creator has no credit with `creator has no credit for spec`, even if another account registered the same spec. Use `get_credits` to check an account's spendable balance. `get_spec.credits` is a legacy aggregate counter for information only; it does not authorize linking. Credits paid before the per-payer ledger was introduced cannot be attributed safely after a code-only upgrade, so those historical credits are not spendable through `get_credits`; their payers must register again.
 
 `link_market` accepts an explicit `spec_hash` for a market whose metadata does not start with `noacourt:` only when called by the market creator. When metadata does start with `noacourt:`, any caller may link, and an explicit hash must match it. Its callback logs a `link_rejected` event and returns `false` on validation failure. At least 60 TGas prepaid is required.
+
+`void_unlinked` is permissionless for a Noa market with Court as resolver that has no Court `Item`. It requires at least 80 TGas and reads Noa's market before forwarding `void_market` with exactly 1 yoctoNEAR. The market must still be `Active`, unlinked, and past its resolution deadline. Invalid cases return `false` from the private validation callback with a `void_unlinked_rejected` event; the final callback emits `void_unlinked` with `success: true` or `false`. No Court state is created. Noa can reject a void when it has a pending resolution proposal, which is not visible in `get_market`.
 
 `trigger` and `trigger_request` require the observation time, retry time, attempt limit, contract balance, and gas checks to pass. At default settings they require at least 165 TGas prepaid; attach 220 TGas to allow margin. The OutLayer request uses `response_format: "Json"`, Court as payer, and the exact stored `spec_json` in `ResolverInput`. The default resource limits are 10 billion instructions, 128 MB, 60 seconds. OutLayer deposit defaults to 0.01 NEAR, resolution fee to 0.05 NEAR, and the recommended minimum registration deposit is 0.1 NEAR. The minimum is supplied explicitly at initialization.
 

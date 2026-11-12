@@ -5,7 +5,7 @@ use near_sdk::serde_json::{self, json, Value};
 use near_sdk::store::LookupMap;
 use near_sdk::{
     assert_one_yocto, env, ext_contract, near, require, AccountId, BorshStorageKey, Gas, NearToken,
-    PanicOnDefault, Promise,
+    PanicOnDefault, Promise, PromiseOrValue,
 };
 
 const NEAR: u128 = 10u128.pow(24);
@@ -14,6 +14,7 @@ const STORAGE_BUFFER: u64 = 2_000;
 const MAX_SPEC: usize = 16 * 1024;
 const MAX_RESULT: usize = 32 * 1024;
 const GAS_LINK: Gas = Gas::from_tgas(25);
+const GAS_UNLINKED_INFO: Gas = Gas::from_tgas(35);
 const GAS_VERDICT: Gas = Gas::from_tgas(50);
 const GAS_FORWARD: Gas = Gas::from_tgas(15);
 const GAS_FORWARD_CB: Gas = Gas::from_tgas(10);
@@ -637,6 +638,84 @@ impl Court {
                     .with_static_gas(GAS_FORWARD_CB)
                     .on_voided(market_id),
             )
+    }
+
+    pub fn void_unlinked(&self, market_id: u64) -> Promise {
+        require!(
+            self.items.get(&market_key(market_id)).is_none(),
+            "market already linked"
+        );
+        require!(
+            env::prepaid_gas().as_tgas() >= 80,
+            "void_unlinked requires at least 80 TGas"
+        );
+        ext_noa::ext(self.noa_contract.clone())
+            .with_static_gas(Gas::from_tgas(10))
+            .get_market(market_id)
+            .then(
+                Self::ext(env::current_account_id())
+                    .with_static_gas(GAS_UNLINKED_INFO)
+                    .on_unlinked_info(market_id),
+            )
+    }
+
+    #[private]
+    pub fn on_unlinked_info(&self, market_id: u64) -> PromiseOrValue<bool> {
+        let checked = (|| -> Result<(), String> {
+            let bytes = env::promise_result_checked(0, MAX_RESULT)
+                .map_err(|_| "get_market failed or result too large")?;
+            let market: Option<MarketInfo> =
+                serde_json::from_slice(&bytes).map_err(|_| "invalid market JSON")?;
+            let market = market.ok_or("market not found")?;
+            if market.id != market_id {
+                return Err("market id mismatch".into());
+            }
+            if market.resolver != env::current_account_id() {
+                return Err("wrong resolver".into());
+            }
+            if market.status != "Active" {
+                return Err("market is not Active".into());
+            }
+            if self.items.get(&market_key(market_id)).is_some() {
+                return Err("market already linked".into());
+            }
+            if env::block_timestamp() <= market.resolution_deadline {
+                return Err("resolution deadline not passed".into());
+            }
+            Ok(())
+        })();
+        if let Err(reason) = checked {
+            env::log_str(&format!("void_unlinked rejected: {reason}"));
+            emit(
+                "void_unlinked_rejected",
+                json!({"market_id":market_id,"reason":reason}),
+            );
+            return PromiseOrValue::Value(false);
+        }
+        PromiseOrValue::Promise(
+            ext_noa::ext(self.noa_contract.clone())
+                .with_attached_deposit(NearToken::from_yoctonear(1))
+                .with_static_gas(GAS_FORWARD)
+                .void_market(market_id)
+                .then(
+                    Self::ext(env::current_account_id())
+                        .with_static_gas(GAS_FORWARD_CB)
+                        .on_unlinked_voided(market_id),
+                ),
+        )
+    }
+
+    #[private]
+    pub fn on_unlinked_voided(&self, market_id: u64) -> bool {
+        let success = env::promise_result_checked(0, 0).is_ok();
+        if !success {
+            env::log_str("Noa void_market failed for unlinked market");
+        }
+        emit(
+            "void_unlinked",
+            json!({"market_id":market_id,"success":success}),
+        );
+        success
     }
 
     #[private]
