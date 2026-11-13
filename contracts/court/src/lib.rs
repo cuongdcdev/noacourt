@@ -308,6 +308,16 @@ impl Court {
     }
 
     #[payable]
+    pub fn set_max_attempts(&mut self, max_attempts: u8) {
+        self.assert_owner();
+        require!(
+            (1..=10).contains(&max_attempts),
+            "max_attempts must be 1..=10"
+        );
+        self.max_attempts = max_attempts;
+    }
+
+    #[payable]
     pub fn set_trusted_keeper(&mut self, trusted_keeper: Option<AccountId>) {
         self.assert_owner();
         self.trusted_keeper = trusted_keeper;

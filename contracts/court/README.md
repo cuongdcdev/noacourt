@@ -41,6 +41,7 @@ Amounts passed as `U128` are **decimal strings in yoctoNEAR**. Times in Noa mark
 | `set_resolver_source` | `{"resolver_source":{"Project":{"project_id":"owner.testnet/court","version_key":null}}}` | Exactly 1 yoctoNEAR | 30 TGas |
 | `set_secrets_ref` | `{"secrets_ref":{"profile":"court","account_id":"owner.testnet"}}` | Exactly 1 yoctoNEAR | 30 TGas |
 | `set_min_deposit` | `{"min_deposit":"100000000000000000000000"}` | Exactly 1 yoctoNEAR | 30 TGas |
+| `set_max_attempts` | `{"max_attempts":5}` | Exactly 1 yoctoNEAR | 30 TGas |
 | `set_trusted_keeper` | `{"trusted_keeper":"keeper.testnet"}` | Exactly 1 yoctoNEAR | 30 TGas |
 | `set_outlayer_params` | `{"resource_limits":{"max_instructions":10000000000,"max_memory_mb":128,"max_execution_seconds":60},"outlayer_deposit":"10000000000000000000000","outlayer_gas_tgas":100,"resolution_fee":"50000000000000000000000"}` | Exactly 1 yoctoNEAR | 30 TGas |
 | `set_owner` | `{"owner":"new-owner.testnet"}` | Exactly 1 yoctoNEAR | 30 TGas |

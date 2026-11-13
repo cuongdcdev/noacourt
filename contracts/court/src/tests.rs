@@ -798,3 +798,29 @@ fn owner_methods_are_protected() {
     court.set_min_deposit(U128(NEAR / 5));
     assert_eq!(court.get_config()["min_deposit"], (NEAR / 5).to_string());
 }
+
+#[test]
+fn owner_can_set_max_attempts_with_bounds_and_effective_minimum() {
+    let mut court = court();
+    set(OTHER, T, 1);
+    assert!(panics(|| court.set_max_attempts(5)));
+    set(OWNER, T, 0);
+    assert!(panics(|| court.set_max_attempts(5)));
+    set(OWNER, T, 1);
+    assert!(panics(|| court.set_max_attempts(0)));
+    assert!(panics(|| court.set_max_attempts(11)));
+
+    court.set_max_attempts(5);
+    assert_eq!(court.get_config()["max_attempts"], 5);
+    let three_attempt_spec = parse_spec(&spec("void"), "sha256:three".into(), account(CREATOR));
+    assert_eq!(court.effective_max(&three_attempt_spec), 3);
+
+    let mut seven_attempts: Value = serde_json::from_str(&spec("void")).unwrap();
+    seven_attempts["retry"]["max_attempts"] = json!(7);
+    let seven_attempt_spec = parse_spec(
+        &seven_attempts.to_string(),
+        "sha256:seven".into(),
+        account(CREATOR),
+    );
+    assert_eq!(court.effective_max(&seven_attempt_spec), 5);
+}
