@@ -11,7 +11,7 @@ import {
   linkRejectionReason,
 } from "../court/client.js";
 import { NearRpc } from "../near/rpc.js";
-import type { KeeperSigner } from "../near/signer.js";
+import type { KeeperSigner, SignerResult } from "../near/signer.js";
 import { SpendCounter } from "../ratelimit.js";
 import { WasmRunner } from "../resolver/wasm.js";
 import {
@@ -122,13 +122,18 @@ export class KeeperLoop {
       /* file logging must not crash the process */
     }
   }
-  private error(action: string, id: string, error: unknown) {
+  private error(
+    action: string,
+    id: string,
+    error: unknown,
+    fields: Record<string, unknown> = {},
+  ) {
     this.counts.errors++;
     const message = error instanceof Error ? error.message : String(error);
     this.lastError = this.deps.config.nearAiApi
       ? message.replaceAll(this.deps.config.nearAiApi, "[redacted]")
       : message;
-    this.log(action, { id, error: this.lastError });
+    this.log(action, { id, ...fields, error: this.lastError });
   }
   private saveCursor(key: string, value: number) {
     this.db
@@ -375,6 +380,7 @@ export class KeeperLoop {
     )
       return;
     this.recent.set(key, this.tickNumber);
+    let sent: SignerResult | null = null;
     try {
       if (action === "submit_keeper_verdict") {
         const specJson = specJsonOf(specEntry);
@@ -453,19 +459,36 @@ export class KeeperLoop {
         },
       };
       if (action === "link_market") args = { ...args, spec_hash: null };
-      const sent = await this.deps.signer.send({ ...calls[action], args });
+      sent = await this.deps.signer.send({ ...calls[action], args });
+      if (sent.status === "unknown" || sent.status === "pending") {
+        this.recent.delete(key);
+        this.log(action, {
+          id,
+          tx_hash: sent.txHash,
+          status: sent.status,
+          result: sent.status,
+          error: null,
+        });
+        return;
+      }
+      if (sent.status === "failure")
+        throw new Error(sent.error ?? "transaction receipt failed");
       const status = (sent.outcome as Record<string, any>)?.status;
       if (status?.Failure) throw new Error(JSON.stringify(status.Failure));
       if (
         action === "link_market" &&
-        status?.SuccessValue &&
-        Buffer.from(status.SuccessValue, "base64").toString("utf8") === "false"
+        (sent.return_value === false ||
+          (status?.SuccessValue &&
+            Buffer.from(status.SuccessValue, "base64").toString("utf8") ===
+              "false"))
       ) {
         await this.rejectLink(
           id,
           linkRejectionReason(sent.outcome) ??
             "link_market returned false without reason",
           sent.txHash,
+          true,
+          sent.status ?? "success",
         );
         return;
       }
@@ -479,11 +502,23 @@ export class KeeperLoop {
         );
       }
       this.counts.actions++;
-      this.log(action, { id, tx_hash: sent.txHash, result: "ok" });
+      this.log(action, {
+        id,
+        tx_hash: sent.txHash,
+        status: sent.status ?? "success",
+        result: "ok",
+        error: sent.error ?? null,
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (action === "link_market") {
-        await this.rejectLink(id, message, undefined, false);
+        await this.rejectLink(
+          id,
+          message,
+          sent?.txHash,
+          false,
+          sent?.status ?? "failure",
+        );
         return;
       }
       if (action === "void_unlinked") {
@@ -495,6 +530,8 @@ export class KeeperLoop {
           this.voidUnsupportedUntilMs = this.nowMs() + 60 * 60_000;
           this.log(action, {
             id,
+            tx_hash: sent?.txHash,
+            status: sent?.status ?? "failure",
             result: "unsupported",
             retry_at: new Date(this.voidUnsupportedUntilMs).toISOString(),
           });
@@ -508,6 +545,8 @@ export class KeeperLoop {
         );
         this.log(action, {
           id,
+          tx_hash: sent?.txHash,
+          status: sent?.status ?? "failure",
           result: "rejected",
           reason: message,
           permanent: row.permanent === 1,
@@ -523,8 +562,18 @@ export class KeeperLoop {
           message,
         )
       )
-        this.log(action, { id, result: "skipped", error: message });
-      else this.error(action, id, error);
+        this.log(action, {
+          id,
+          tx_hash: sent?.txHash,
+          status: sent?.status ?? "failure",
+          result: "skipped",
+          error: message,
+        });
+      else
+        this.error(action, id, error, {
+          tx_hash: sent?.txHash,
+          status: sent?.status ?? "failure",
+        });
     }
   }
 
@@ -533,6 +582,7 @@ export class KeeperLoop {
     reason: string,
     txHash?: string,
     fromCallback = true,
+    txStatus: "success" | "failure" | "pending" | "unknown" = "failure",
   ): Promise<void> {
     const marketId = Number(id.slice("noa:".length));
     const classification = fromCallback
@@ -561,8 +611,10 @@ export class KeeperLoop {
     this.log("link_market", {
       id,
       tx_hash: txHash,
+      status: txStatus,
       result: "rejected",
       reason,
+      error: reason,
       permanent: row.permanent === 1,
       next_retry_at:
         row.next_retry_at === null

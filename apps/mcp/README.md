@@ -17,6 +17,8 @@ Rejected market links are cached in `data/mcp.sqlite`: permanent Court validatio
 Keeper `trigger` and `trigger_request` attach 300 TGas to cover the OutLayer execution request and Court callbacks.
 They wait until `observation.at` plus `TRIGGER_GRACE_SECONDS` (70 seconds by default), and still respect Court's later `retry_at_ns` when present.
 
+The keeper signs each transaction once, submits it without waiting for execution, and polls its hash with `EXECUTED_OPTIMISTIC`. `TX_POLL_TIMEOUT_MS` (default 90000) and `TX_POLL_INTERVAL_MS` (default 2500) control each polling window. After a polling timeout, it checks the access-key nonce at optimistic finality. A consumed nonce returns `pending` without another transaction; only an unconsumed nonce permits one re-sign. Pending and unknown results are rechecked on the next keeper tick.
+
 ## Transaction builder
 
 Import `buildCreateMarketTxs` and `parseCreateMarketResult` from `src/lib.ts` or the built package entry. The builder converts NPOINT stake amounts with integer decimal math. If the account's Noa internal balance is insufficient, it adds `ft_transfer_call` before Court registration and Noa creation. The live signer plan reads Court's `min_deposit`, Noa's `market_creation_fee`, fee exemption, and internal balance through the rotating RPC client.

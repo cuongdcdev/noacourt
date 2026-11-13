@@ -223,15 +223,22 @@ export async function completeSignRequest(
       gasTgas: 100,
     });
     link_tx_hash = sent.txHash;
-    const status = (sent.outcome as Record<string, any>)?.status;
-    const returned = status?.SuccessValue
-      ? Buffer.from(status.SuccessValue, "base64").toString("utf8")
-      : "";
-    linked = !status?.Failure && returned !== "false";
-    if (!linked)
-      link_error =
-        linkRejectionReason(sent.outcome) ||
-        "Court link_market rejected; keeper will retry";
+    if (sent.status === "unknown" || sent.status === "pending") {
+      link_error = `Court link status ${sent.status}; keeper will recheck the market`;
+    } else if (sent.status === "failure") {
+      link_error = sent.error ?? "Court link transaction failed";
+    } else {
+      const status = (sent.outcome as Record<string, any>)?.status;
+      const returned = status?.SuccessValue
+        ? Buffer.from(status.SuccessValue, "base64").toString("utf8")
+        : "";
+      linked =
+        !status?.Failure && sent.return_value !== false && returned !== "false";
+      if (!linked)
+        link_error =
+          linkRejectionReason(sent.outcome) ||
+          "Court link_market rejected; keeper will retry";
+    }
   } catch (error) {
     link_error =
       error instanceof Error ? error.message : "keeper link unavailable";

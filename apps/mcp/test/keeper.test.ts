@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "../src/config.js";
@@ -364,6 +364,46 @@ describe("keeper tick", () => {
     expect(harness.keeper.counts.link_rejections_pending).toBe(1);
     harness.close();
   });
+
+  it.each(["unknown", "pending"] as const)(
+    "logs a %s hash and retries after re-reading Court next tick",
+    async (status) => {
+      const dir = temp();
+      const clock = { now: baseMs };
+      const send = vi.fn(async () => ({
+        txHash: "known-local-hash",
+        tx_hash: "known-local-hash",
+        status,
+        return_value: null,
+        logs: [],
+        error: null,
+        outcome: null,
+      }));
+      const harness = unlinkedHarness(dir, clock, send);
+      await harness.keeper.tick();
+      await harness.keeper.tick();
+      expect(send).toHaveBeenCalledTimes(2);
+      expect((harness.court.market as any).mock.calls).toHaveLength(2);
+      expect(harness.keeper.counts.link_rejections_pending).toBe(0);
+      const lines = readFileSync(join(dir, "keeper.log"), "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(lines).toEqual([
+        expect.objectContaining({
+          action: "link_market",
+          tx_hash: "known-local-hash",
+          status,
+        }),
+        expect.objectContaining({
+          action: "link_market",
+          tx_hash: "known-local-hash",
+          status,
+        }),
+      ]);
+      harness.close();
+    },
+  );
 
   it("refreshes on already linked without caching a rejection", async () => {
     const dir = temp();

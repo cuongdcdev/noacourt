@@ -11,6 +11,11 @@ const number = (name: string, fallback: number) => {
   if (!Number.isFinite(value) || value < 0) throw new Error(`Invalid ${name}`);
   return value;
 };
+const positiveNumber = (name: string, fallback: number) => {
+  const value = number(name, fallback);
+  if (value <= 0) throw new Error(`Invalid ${name}`);
+  return value;
+};
 const wasmCandidates = [
   resolve(root, "target/wasm32-wasip2/release/resolver.wasm"),
   resolve(root, "resolver/target/wasm32-wasip2/release/resolver.wasm"),
@@ -57,6 +62,8 @@ export function loadConfig() {
     dataDir: resolve(env("DATA_DIR", resolve(root, "apps/mcp/data"))),
     courtTrustedKeeper: env("COURT_TRUSTED_KEEPER", "0") === "1",
     keeperIntervalMs: number("KEEPER_INTERVAL_MS", 30000),
+    txPollTimeoutMs: positiveNumber("TX_POLL_TIMEOUT_MS", 90000),
+    txPollIntervalMs: positiveNumber("TX_POLL_INTERVAL_MS", 2500),
     triggerGraceSeconds: number("TRIGGER_GRACE_SECONDS", 70),
     keeperEnabled: env("KEEPER_ENABLED", "1") === "1",
   };
