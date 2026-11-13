@@ -1,4 +1,5 @@
 import { catalog, verifiedHosts } from "./catalog.js";
+import { DEFAULT_RETRY_POLICY } from "./spec/defaults.js";
 
 function utcMinute(timeMs: number): string {
   return new Date(timeMs).toISOString().replace(".000Z", "Z");
@@ -23,7 +24,7 @@ export function makeExamples(now: Date = new Date()) {
     decide: { kind: "threshold", op: ">=", value: "3.40" },
     outcome_map: { true: "Yes", false: "No" },
     on_unavailable: "void",
-    retry: { max_attempts: 3, every: "5m" },
+    retry: { ...DEFAULT_RETRY_POLICY },
   };
   return {
     A1: {
@@ -141,7 +142,9 @@ Catalog: ${catalog.map((tool) => `${tool.name} (${tool.kind}: ${tool.summary})`)
 
 Decide kinds: threshold (>=, >, <=, <), buckets (half-open [lower, upper)), equals, bool, change (up/down/tie), text_judge (yes/no with criteria, window, and default_if_no_evidence set to the lowercase result key "yes" or "no"). Lint checks: observation after market close, bucket coverage, snapshot max_delay, two price sources, http_json identity, GitHub repo_id identity, outcome_map coverage, change baseline before observation, 2–10 outcomes.
 
-Noa constraints: 2–10 outcomes; title at most 200 characters; outcome at most 50 characters; market duration at least 5 minutes; resolution window at least 10 minutes; market.expiration must be <= spec.observation.at. Market token ${"point.noamarket.testnet"} is NPOINT with 18 decimals.
+Default retry policy: max_attempts 5, every 3m. Set resolution_window_minutes to at least max(10 minutes, max_attempts × retry.every + 5 minutes), rounded up; for the default this is 5 × 3m + 5m = 20 minutes. A shorter requested window is raised with a warning by market_create_link.
+
+Noa constraints: 2–10 outcomes; title at most 200 characters; outcome at most 50 characters; market duration at least 5 minutes; resolution window at least 10 minutes and large enough for retries; market.expiration must be <= spec.observation.at. Market token ${"point.noamarket.testnet"} is NPOINT with 18 decimals.
 
 ## Example ResolutionSpec v1 JSON
 The UTC observation time in each example is generated when this guide is requested (the next whole minute plus 10 minutes); the RSS judging window begins at the next whole minute. Replace these times with the creator's real market times. The A6 and A8 Gist URLs are examples: replace them with your own source URLs. Choose the actual prices and thresholds, then simulate before creating a market.

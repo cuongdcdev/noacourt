@@ -1,3 +1,5 @@
+import { DEFAULT_RETRY_POLICY } from "../spec/defaults.js";
+
 export type WalletTransaction = {
   signerId?: string;
   receiverId: string;
@@ -36,7 +38,7 @@ export type BuildInput = {
 
 export function requiredResolutionWindowMinutes(
   spec: unknown,
-  courtMaxAttempts = 3,
+  courtMaxAttempts: number = DEFAULT_RETRY_POLICY.max_attempts,
 ): number {
   const parsed =
     typeof spec === "string" ? (JSON.parse(spec) as unknown) : spec;
@@ -47,17 +49,14 @@ export function requiredResolutionWindowMinutes(
   const attempts = retry?.max_attempts ?? courtMaxAttempts;
   if (!Number.isSafeInteger(attempts) || attempts < 1)
     throw new Error("retry max_attempts must be a positive integer");
-  const every = retry?.every;
-  let retrySeconds = 0n;
-  if (every !== undefined && every !== null) {
-    const match = typeof every === "string" && /^(\d+)(s|m|h|d)$/.exec(every);
-    if (!match)
-      throw new Error("retry.every must be a duration using s, m, h, or d");
-    const multiplier = { s: 1n, m: 60n, h: 3600n, d: 86400n }[
-      match[2] as "s" | "m" | "h" | "d"
-    ];
-    retrySeconds = BigInt(match[1]) * multiplier;
-  }
+  const every = retry?.every ?? DEFAULT_RETRY_POLICY.every;
+  const match = typeof every === "string" && /^(\d+)(s|m|h|d)$/.exec(every);
+  if (!match)
+    throw new Error("retry.every must be a duration using s, m, h, or d");
+  const multiplier = { s: 1n, m: 60n, h: 3600n, d: 86400n }[
+    match[2] as "s" | "m" | "h" | "d"
+  ];
+  const retrySeconds = BigInt(match[1]) * multiplier;
   const minutes = (BigInt(attempts) * retrySeconds + 300n + 59n) / 60n;
   if (minutes > BigInt(Number.MAX_SAFE_INTEGER))
     throw new Error("required resolution window is too large");

@@ -38,6 +38,14 @@ describe("transaction builder", () => {
     expect(requiredResolutionWindowMinutes(examples.A1)).toBe(20);
     expect(
       requiredResolutionWindowMinutes({
+        retry: { max_attempts: 5, every: "3m" },
+      }),
+    ).toBe(20);
+    expect(requiredResolutionWindowMinutes({}, 5)).toBe(20);
+    expect(requiredResolutionWindowMinutes({})).toBe(20);
+    expect(requiredResolutionWindowMinutes({}, 4)).toBe(17);
+    expect(
+      requiredResolutionWindowMinutes({
         retry: { max_attempts: 10, every: "45s" },
       }),
     ).toBe(13);
@@ -54,7 +62,7 @@ describe("transaction builder", () => {
     expect(requiredResolutionWindowMinutes({ retry: { every: "5m" } }, 4)).toBe(
       25,
     );
-    expect(requiredResolutionWindowMinutes({}, 3)).toBe(10);
+    expect(requiredResolutionWindowMinutes({}, 3)).toBe(14);
     expect(() =>
       requiredResolutionWindowMinutes({ retry: { every: "5x" } }),
     ).toThrow("retry.every");
@@ -135,7 +143,7 @@ describe("transaction builder", () => {
         resolver: "court.testnet",
         duration_minutes: 10,
         duration_days: null,
-        resolution_window_minutes: 10,
+        resolution_window_minutes: 20,
       },
       gas: "100000000000000",
       deposit: "300",
@@ -445,5 +453,39 @@ describe("sign request HTTP", () => {
       request.tx_plan.at(-1)?.actions[0].params.args.resolution_window_minutes,
     ).toBe(25);
     expect(court.maxAttempts).toHaveBeenCalled();
+  });
+  it("fills the whole default retry policy using Court's attempt count", async () => {
+    const { retry: _retry, ...withoutRetry } = examples.A1;
+    const response = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 102,
+        method: "tools/call",
+        params: {
+          name: "market_create_link",
+          arguments: {
+            title: "NEAR market",
+            outcomes: ["Yes", "No"],
+            stake: "5",
+            duration_minutes: 10,
+            spec: withoutRetry,
+          },
+        },
+      }),
+    });
+    const data = (await response.json()) as any;
+    expect(data.result.isError).not.toBe(true);
+    const link = JSON.parse(data.result.content[0].text);
+    expect(link.summary.resolution_window_minutes).toBe(17);
+    const request = store.get(link.url.split("/").at(-1)!)!;
+    expect(JSON.parse(request.spec_json).retry).toEqual({
+      max_attempts: 4,
+      every: "3m",
+    });
   });
 });

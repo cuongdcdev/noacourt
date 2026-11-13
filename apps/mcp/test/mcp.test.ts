@@ -222,9 +222,27 @@ describe("MCP HTTP", () => {
     expect(
       entry.param_json_schema.properties.extract.properties.path.type,
     ).toBe("string");
+    expect(entry.spec_retry_template).toEqual({ max_attempts: 5, every: "3m" });
+    expect(entry.recommended_resolution_window_minutes).toBe(20);
     const missing = await tool("catalog_tool", { name: "nope" });
     expect(missing.isError).toBe(true);
     expect(missing.content[0].text).toContain("binance_kline");
+  });
+  it("uses the default retry policy in source_sample's single-source spec", async () => {
+    const runner = vi.spyOn(wasm, "run");
+    try {
+      const sampled = await tool("source_sample", {
+        source: examples.A1.sources[0],
+      });
+      expect(sampled.isError).not.toBe(true);
+      const simulated = runner.mock.calls.find(([mode]) => mode === "simulate");
+      expect(simulated).toBeDefined();
+      expect(JSON.parse(simulated![1])).toMatchObject({
+        retry: { max_attempts: 5, every: "3m" },
+      });
+    } finally {
+      runner.mockRestore();
+    }
   });
   it("simulates and reads market status via mocked RPC", async () => {
     const result = await tool("spec_simulate", { spec: examples.A1 });

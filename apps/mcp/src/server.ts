@@ -15,6 +15,7 @@ import { WasmRunner } from "./resolver/wasm.js";
 import { RateLimiter, SpendCounter } from "./ratelimit.js";
 import { jcs, parseSpec } from "./spec/canonical.js";
 import { prelint } from "./spec/prelint.js";
+import { DEFAULT_RETRY_POLICY } from "./spec/defaults.js";
 import { renderRules } from "./spec/render.js";
 import { rawSample } from "./source.js";
 import { SignStore } from "./sign/store.js";
@@ -411,12 +412,20 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
     );
     register(
       "catalog_tool",
-      "Get one resolver source tool’s full parameter schema, example source object, and usage notes.",
+      "Get one resolver source tool’s full parameter schema, example source object, usage notes, and the default retry/window template.",
       { name: z.string().describe("Catalog tool name") },
       async ({ name }) => {
         const found = catalog.find((item) => item.name === name);
         return found
-          ? ok({ ...found, param_json_schema: catalogParamSchemas[name] })
+          ? ok({
+              ...found,
+              param_json_schema: catalogParamSchemas[name],
+              spec_retry_template: { ...DEFAULT_RETRY_POLICY },
+              recommended_resolution_window_minutes:
+                requiredResolutionWindowMinutes({
+                  retry: DEFAULT_RETRY_POLICY,
+                }),
+            })
           : failed(
               `Unknown catalog tool ${name}. Valid names: ${catalog.map((item) => item.name).join(", ")}`,
             );
@@ -521,7 +530,7 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
                 },
             outcome_map: { true: "Yes", false: "No" },
             on_unavailable: "void",
-            retry: { max_attempts: 1, every: "1m" },
+            retry: { ...DEFAULT_RETRY_POLICY },
           };
           const checked = await lint(spec);
           if (!checked.ok)
@@ -589,16 +598,16 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
             typeof court.maxAttempts === "function"
               ? await court.maxAttempts().catch(() => null)
               : null;
-          const spec =
-            originalSpec.retry?.max_attempts == null
-              ? {
-                  ...originalSpec,
-                  retry: {
-                    ...originalSpec.retry,
-                    max_attempts: configuredAttempts ?? 3,
-                  },
-                }
-              : originalSpec;
+          const maxAttempts =
+            configuredAttempts ?? DEFAULT_RETRY_POLICY.max_attempts;
+          const spec: Record<string, any> = {
+            ...originalSpec,
+            retry: {
+              ...DEFAULT_RETRY_POLICY,
+              ...originalSpec.retry,
+              max_attempts: originalSpec.retry?.max_attempts ?? maxAttempts,
+            },
+          };
           const checked = await lint(spec);
           if (!checked.ok)
             throw new Error(
@@ -621,7 +630,7 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
             throw new Error("duration must be 5 minutes to 365 days");
           const requiredWindow = requiredResolutionWindowMinutes(
             spec,
-            configuredAttempts ?? 3,
+            maxAttempts,
           );
           const requestedWindow = args.resolution_window_minutes;
           const resolutionWindow = Math.max(
@@ -655,7 +664,7 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
             duration_minutes: args.duration_minutes,
             duration_days: args.duration_days,
             resolution_window_minutes: resolutionWindow,
-            court_max_attempts: configuredAttempts ?? 3,
+            court_max_attempts: maxAttempts,
             creator: args.creator,
           });
           return {

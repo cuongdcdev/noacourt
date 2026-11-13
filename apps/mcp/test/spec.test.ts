@@ -14,10 +14,13 @@ describe("canonical rules and prelint", () => {
       from: "2026-11-12T09:01:00Z",
       to: "2026-11-12T09:11:00Z",
     });
-    for (const spec of Object.values(early))
+    for (const spec of Object.values(early)) {
       expect(prelint(spec).ok).toBe(true);
+      expect(spec.retry).toEqual({ max_attempts: 5, every: "3m" });
+    }
     expect(courtGuide()).not.toContain("PLACEHOLDER");
     expect(courtGuide()).toContain("replace them with your own source URLs");
+    expect(courtGuide()).toContain("5 × 3m + 5m = 20 minutes");
   });
   it("produces identical bytes and hashes regardless of key order", () => {
     const a = renderRules(examples.A1);
