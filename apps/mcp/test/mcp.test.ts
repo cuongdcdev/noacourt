@@ -33,8 +33,11 @@ const config = {
   rateLimitPerMin: 30,
 };
 const rpc = {
-  view: vi.fn(async (_account: string, method: string) =>
-    method === "get_market" ? { id: 7, status: "Active" } : null,
+  view: vi.fn(
+    async (_account: string, method: string, args?: { market_id?: number }) =>
+      method === "get_market" && args?.market_id === 7
+        ? { id: 7, status: "Active" }
+        : null,
   ),
   txStatus: vi.fn(async () => ({
     receipts_outcome: [
@@ -314,6 +317,69 @@ describe("MCP HTTP", () => {
     expect(pending).toMatchObject({ status: "pending", request_id: "noa:7" });
     expect(pending.next_step).toBeTypeOf("string");
     missingVerdict.mockRestore();
+  });
+  it("returns not_found for unknown Noa markets and Court requests", async () => {
+    const market = await tool("market_status", { market_id: 999 });
+    expect(market.isError).not.toBe(true);
+    expect(JSON.parse(market.content[0].text)).toMatchObject({
+      status: "not_found",
+      lifecycle: "not_found",
+      market_id: 999,
+      next_step: expect.stringContaining("check the market_id"),
+    });
+    const verdictMarket = await tool("verdict_get", { market_id: 999 });
+    expect(verdictMarket.isError).not.toBe(true);
+    expect(JSON.parse(verdictMarket.content[0].text)).toMatchObject({
+      status: "not_found",
+      lifecycle: "not_found",
+      request_id: "noa:999",
+      next_step: expect.stringContaining("check the market_id"),
+    });
+    const verdictRequest = await tool("verdict_get", { request_id: "req:999" });
+    expect(verdictRequest.isError).not.toBe(true);
+    expect(JSON.parse(verdictRequest.content[0].text)).toMatchObject({
+      status: "not_found",
+      lifecycle: "not_found",
+      request_id: "req:999",
+      next_step: expect.stringContaining("check the request_id"),
+    });
+  });
+  it("uses pending only for an existing Court request and keeps RPC failures as errors", async () => {
+    const request = vi
+      .spyOn(court, "request")
+      .mockResolvedValueOnce({ id: "req:1", status: "Linked" });
+    const verdict = vi.spyOn(court, "verdict").mockResolvedValueOnce(null);
+    try {
+      const pending = await tool("verdict_get", { request_id: "req:1" });
+      expect(pending.isError).not.toBe(true);
+      expect(JSON.parse(pending.content[0].text)).toMatchObject({
+        status: "pending",
+        lifecycle: "linked",
+      });
+    } finally {
+      request.mockRestore();
+      verdict.mockRestore();
+    }
+    const failedMarket = vi
+      .spyOn(rpc, "view")
+      .mockRejectedValueOnce(new Error("RPC offline"));
+    try {
+      const result = await tool("market_status", { market_id: 999 });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("RPC offline");
+    } finally {
+      failedMarket.mockRestore();
+    }
+    const failedRequest = vi
+      .spyOn(court, "request")
+      .mockRejectedValueOnce(new Error("Court RPC offline"));
+    try {
+      const result = await tool("verdict_get", { request_id: "req:999" });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("Court RPC offline");
+    } finally {
+      failedRequest.mockRestore();
+    }
   });
   it("rejects source_sample loopback and text_judge spend cap", async () => {
     const sample = await tool("source_sample", {

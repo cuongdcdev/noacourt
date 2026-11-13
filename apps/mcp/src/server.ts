@@ -846,7 +846,20 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
             "get_market",
             { market_id },
           );
-          if (!market) throw new Error(`Noa market ${market_id} not found`);
+          if (market == null)
+            return {
+              status: "not_found",
+              lifecycle: "not_found",
+              now_utc: new Date().toISOString(),
+              market_id,
+              market: null,
+              pending_resolution: null,
+              court_market: null,
+              verdict: null,
+              next_step: `Noa market ${market_id} does not exist; check the market_id and try again.`,
+              next_action_at_utc: null,
+              eta_utc: null,
+            };
           const pending_resolution = await rpc.view<unknown>(
             config.noaContract,
             "get_pending_resolution",
@@ -862,6 +875,7 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
             : null;
           const rejection = history.linkRejection(market_id);
           return {
+            status: verdict ? "resolved" : "pending",
             now_utc: new Date().toISOString(),
             market: withIso(market),
             pending_resolution: withIso(pending_resolution),
@@ -898,14 +912,42 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
           const id =
             request_id || (market_id !== undefined ? `noa:${market_id}` : null);
           if (!id) throw new Error("market_id or request_id is required");
-          const [verdict, courtItem, noa, pending] = await Promise.all([
-            court.verdict(id),
-            request_id ? court.request(id) : court.market(market_id!),
+          const noa =
             market_id === undefined
               ? null
-              : rpc.view<unknown>(config.noaContract, "get_market", {
+              : await rpc.view<unknown>(config.noaContract, "get_market", {
                   market_id,
-                }),
+                });
+          if (market_id !== undefined && noa == null)
+            return {
+              status: "not_found",
+              lifecycle: "not_found",
+              now_utc: new Date().toISOString(),
+              request_id: id,
+              market_id,
+              verdict: null,
+              court_market: null,
+              next_step: `Noa market ${market_id} does not exist; check the market_id and try again.`,
+              next_action_at_utc: null,
+              eta_utc: null,
+            };
+          const courtItem = request_id
+            ? await court.request(id)
+            : await court.market(market_id!);
+          if (request_id && courtItem == null)
+            return {
+              status: "not_found",
+              lifecycle: "not_found",
+              now_utc: new Date().toISOString(),
+              request_id: id,
+              verdict: null,
+              court_request: null,
+              next_step: `Court request ${id} does not exist; check the request_id and try again.`,
+              next_action_at_utc: null,
+              eta_utc: null,
+            };
+          const [verdict, pending] = await Promise.all([
+            court.verdict(id),
             market_id === undefined
               ? null
               : rpc.view<unknown>(
