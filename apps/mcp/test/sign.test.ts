@@ -19,10 +19,11 @@ import { WasmRunner } from "../src/resolver/wasm.js";
 import type { NearRpc } from "../src/near/rpc.js";
 import type { CourtClient } from "../src/court/client.js";
 import type { KeeperSigner } from "../src/near/signer.js";
+import { calculateSignTiming } from "../src/sign/timing.js";
 
 const hash = `sha256:${"a".repeat(64)}`;
 const basic = {
-  spec_json: '{"version":1}',
+  spec_json: '{"version":1,"observation":{"at":"2099-01-01T00:00:00Z"}}',
   spec_hash: hash,
   title: "NEAR above $3",
   outcomes: ["Yes", "No"],
@@ -30,62 +31,97 @@ const basic = {
   court_contract: "court.testnet",
   noa_contract: "noa.testnet",
   duration_minutes: 10,
+  expiration_estimate_at: "2099-01-01T00:00:00Z",
 };
 const fixtureDir = () => mkdtempSync(join(tmpdir(), "noacourt-sign-"));
 
 describe("transaction builder", () => {
-  it("calculates retry windows with seconds, minutes, hours, days and fallback attempts", () => {
-    expect(requiredResolutionWindowMinutes(examples.A1)).toBe(20);
+  it("rebuilds signing duration with a margin and refuses late signing", () => {
+    const observation = "2026-11-13T08:40:00Z";
+    const early = calculateSignTiming({
+      observation_at: observation,
+      requested_close_at: observation,
+      now_ms: Date.parse("2026-11-13T08:30:36Z"),
+      sign_margin_minutes: 3,
+    });
+    expect(early.duration_minutes).toBe(6);
+    expect(early.expiration_estimate_at).toBe("2026-11-13T08:36:36.000Z");
+    expect(early.sign_before).toBe("2026-11-13T08:32:00.000Z");
     expect(
-      requiredResolutionWindowMinutes({
-        retry: { max_attempts: 5, every: "3m" },
-      }),
-    ).toBe(20);
-    expect(requiredResolutionWindowMinutes({}, 5)).toBe(20);
-    expect(requiredResolutionWindowMinutes({})).toBe(20);
-    expect(requiredResolutionWindowMinutes({}, 4)).toBe(17);
-    expect(
-      requiredResolutionWindowMinutes({
-        retry: { max_attempts: 10, every: "45s" },
-      }),
-    ).toBe(13);
-    expect(
-      requiredResolutionWindowMinutes({
-        retry: { max_attempts: 2, every: "2h" },
-      }),
-    ).toBe(245);
-    expect(
-      requiredResolutionWindowMinutes({
-        retry: { max_attempts: 1, every: "1d" },
-      }),
-    ).toBe(1445);
-    expect(requiredResolutionWindowMinutes({ retry: { every: "5m" } }, 4)).toBe(
-      25,
-    );
-    expect(requiredResolutionWindowMinutes({}, 3)).toBe(14);
+      requiredResolutionWindowMinutes(
+        observation,
+        early.expiration_estimate_at,
+        5,
+        "3m",
+      ),
+    ).toBe(26);
     expect(() =>
-      requiredResolutionWindowMinutes({ retry: { every: "5x" } }),
+      calculateSignTiming({
+        observation_at: observation,
+        requested_close_at: observation,
+        now_ms: Date.parse("2026-11-13T08:32:00Z"),
+        sign_margin_minutes: 3,
+      }),
+    ).toThrow("Signing deadline passed");
+    const earlierClose = calculateSignTiming({
+      observation_at: observation,
+      requested_close_at: "2026-11-13T08:35:00Z",
+      now_ms: Date.parse("2026-11-13T08:20:00Z"),
+      sign_margin_minutes: 3,
+    });
+    expect(earlierClose.duration_minutes).toBe(15);
+  });
+  it("calculates retry windows with seconds, minutes, hours, days and fallback attempts", () => {
+    const observation = "2026-11-13T08:40:00Z";
+    expect(
+      requiredResolutionWindowMinutes(observation, observation, 5, "3m"),
+    ).toBe(22);
+    expect(
+      requiredResolutionWindowMinutes(
+        observation,
+        "2026-11-13T08:36:36Z",
+        5,
+        "3m",
+      ),
+    ).toBe(26);
+    expect(
+      requiredResolutionWindowMinutes(observation, observation, 10, "45s"),
+    ).toBe(15);
+    expect(
+      requiredResolutionWindowMinutes(observation, observation, 2, "2h"),
+    ).toBe(247);
+    expect(
+      requiredResolutionWindowMinutes(observation, observation, 1, "1d"),
+    ).toBe(1447);
+    expect(() =>
+      requiredResolutionWindowMinutes(observation, observation, 5, "5x"),
     ).toThrow("retry.every");
   });
   it("uses the required minute window for day-duration markets and rejects a shorter direct plan", () => {
     const dayMarket = buildCreateMarketTxs({
       ...basic,
-      spec_json: JSON.stringify({ retry: { max_attempts: 3, every: "5m" } }),
+      spec_json: JSON.stringify({
+        observation: { at: basic.expiration_estimate_at },
+        retry: { max_attempts: 3, every: "5m" },
+      }),
       duration_minutes: undefined,
       duration_days: 1,
     });
     expect(dayMarket.at(-1)?.actions[0].params.args).toMatchObject({
       duration_days: 1,
       duration_minutes: null,
-      resolution_window_minutes: 20,
+      resolution_window_minutes: 22,
     });
     expect(() =>
       buildCreateMarketTxs({
         ...basic,
-        spec_json: JSON.stringify({ retry: { max_attempts: 3, every: "5m" } }),
+        spec_json: JSON.stringify({
+          observation: { at: basic.expiration_estimate_at },
+          retry: { max_attempts: 3, every: "5m" },
+        }),
         resolution_window_minutes: 10,
       }),
-    ).toThrow("at least 20");
+    ).toThrow("at least 22");
   });
   it("converts token amounts exactly without floating point", () => {
     expect(decimalToUnits("1.000000000000000001", 18)).toBe(
@@ -143,7 +179,7 @@ describe("transaction builder", () => {
         resolver: "court.testnet",
         duration_minutes: 10,
         duration_days: null,
-        resolution_window_minutes: 20,
+        resolution_window_minutes: 22,
       },
       gas: "100000000000000",
       deposit: "300",
@@ -320,6 +356,29 @@ describe("sign request HTTP", () => {
       }),
     );
   });
+  it("rebuilds the plan from current time instead of reusing the stored transaction", async () => {
+    const created = await createSignRequest(config, store, params);
+    const id = created.url.split("/").at(-1)!;
+    const storedDuration = store.get(id)!.tx_plan.at(-1)!.actions[0].params.args
+      .duration_minutes as number;
+    const actualNow = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(actualNow + 60_000);
+    try {
+      const response = await fetch(
+        `${base}/api/sign/${id}/plan?account=${account}`,
+      );
+      expect(response.status).toBe(200);
+      const plan = (await response.json()) as any;
+      expect(
+        plan.tx_plan.at(-1).actions[0].params.args.duration_minutes,
+      ).toBeLessThan(storedDuration);
+      expect(
+        plan.tx_plan.at(-1).actions[0].params.args.resolution_window_minutes,
+      ).toBeGreaterThanOrEqual(created.summary.resolution_window_minutes);
+    } finally {
+      clock.mockRestore();
+    }
+  });
   it("shows expired with no transaction button", async () => {
     const request = store.create(
       params,
@@ -336,6 +395,11 @@ describe("sign request HTTP", () => {
     expect(html).toContain('id="state">expired');
     expect(html).not.toContain('id="sign-button"');
     expect((await fetch(`${base}/api/sign/${request.id}`)).status).toBe(410);
+    const plan = await fetch(
+      `${base}/api/sign/${request.id}/plan?account=${account}`,
+    );
+    expect(plan.status).toBe(409);
+    expect((await plan.json()).error).toContain("signing deadline passed");
   });
   it("returns a real pending sign link from the MCP tool", async () => {
     const response = await fetch(`${base}/mcp`, {
@@ -365,13 +429,51 @@ describe("sign request HTTP", () => {
     const link = JSON.parse(data.result.content[0].text);
     expect(link.url).toContain("/sign/");
     expect(link.qr_png_data_url).toMatch(/^data:image\/png;base64,/);
-    expect(link.summary.resolution_window_minutes).toBe(20);
+    expect(link.summary.resolution_window_minutes).toBeGreaterThanOrEqual(25);
     expect(link.warnings).toEqual([]);
     const request = store.get(link.url.split("/").at(-1)!)!;
+    expect(link.spec_hash).toBe(rendered.spec_hash);
+    expect(request.spec_json).toBe(rendered.spec_json);
+    expect(
+      request.tx_plan.find((tx) => tx.receiverId === config.courtContract)
+        ?.actions[0].params.args.spec_json,
+    ).toBe(rendered.spec_json);
     expect(request.status).toBe("pending");
     expect(
       request.tx_plan.at(-1)?.actions[0].params.args.resolution_window_minutes,
-    ).toBe(20);
+    ).toBe(link.summary.resolution_window_minutes);
+  });
+  it("recomputes a mismatched incoming rules hash and keeps the rendered spec hash", async () => {
+    const response = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 103,
+        method: "tools/call",
+        params: {
+          name: "market_create_link",
+          arguments: {
+            title: "NEAR market",
+            outcomes: ["Yes", "No"],
+            stake: "5",
+            duration_minutes: 10,
+            spec: {
+              ...examples.A1,
+              rules_text_hash: `sha256:${"0".repeat(64)}`,
+            },
+          },
+        },
+      }),
+    });
+    const body = (await response.json()) as any;
+    expect(body.result.isError).not.toBe(true);
+    const link = JSON.parse(body.result.content[0].text);
+    expect(link.spec_hash).toBe(rendered.spec_hash);
+    expect(link.warnings.join(" ")).toContain("rules_text_hash differed");
   });
   it("warns and raises an explicit short window in the stored sign plan", async () => {
     const response = await fetch(`${base}/mcp`, {
@@ -400,25 +502,31 @@ describe("sign request HTTP", () => {
     const data = (await response.json()) as any;
     expect(data.result.isError).not.toBe(true);
     const link = JSON.parse(data.result.content[0].text);
-    expect(link.summary.resolution_window_minutes).toBe(20);
+    expect(link.summary.resolution_window_minutes).toBeGreaterThanOrEqual(25);
     expect(link.warnings).toHaveLength(1);
-    expect(link.warnings[0]).toContain("raised to 20 minutes");
-    expect(link.text).toContain("raised to 20 minutes");
+    expect(link.warnings[0]).toContain(
+      `raised to ${link.summary.resolution_window_minutes} minutes`,
+    );
+    expect(link.text).toContain(
+      `raised to ${link.summary.resolution_window_minutes} minutes`,
+    );
     const id = link.url.split("/").at(-1)!;
     expect(
       store.get(id)?.tx_plan.at(-1)?.actions[0].params.args
         .resolution_window_minutes,
-    ).toBe(20);
+    ).toBe(link.summary.resolution_window_minutes);
     const publicData = (await (
       await fetch(`${base}/api/sign/${id}`)
     ).json()) as any;
-    expect(publicData.params.resolution_window_minutes).toBe(20);
+    expect(publicData.params.resolution_window_minutes).toBe(
+      link.summary.resolution_window_minutes,
+    );
     const plan = (await (
       await fetch(`${base}/api/sign/${id}/plan?account=${account}`)
     ).json()) as any;
     expect(
       plan.tx_plan.at(-1).actions[0].params.args.resolution_window_minutes,
-    ).toBe(20);
+    ).toBeGreaterThanOrEqual(link.summary.resolution_window_minutes);
   });
   it("uses Court max_attempts when the input spec omits it", async () => {
     const response = await fetch(`${base}/mcp`, {
@@ -446,12 +554,15 @@ describe("sign request HTTP", () => {
     const data = (await response.json()) as any;
     expect(data.result.isError).not.toBe(true);
     const link = JSON.parse(data.result.content[0].text);
-    expect(link.summary.resolution_window_minutes).toBe(25);
+    expect(link.summary.resolution_window_minutes).toBeGreaterThanOrEqual(30);
     const request = store.get(link.url.split("/").at(-1)!)!;
-    expect(JSON.parse(request.spec_json).retry.max_attempts).toBe(4);
+    expect(JSON.parse(request.spec_json).retry).toEqual({
+      max_attempts: 5,
+      every: "5m",
+    });
     expect(
       request.tx_plan.at(-1)?.actions[0].params.args.resolution_window_minutes,
-    ).toBe(25);
+    ).toBe(link.summary.resolution_window_minutes);
     expect(court.maxAttempts).toHaveBeenCalled();
   });
   it("fills the whole default retry policy using Court's attempt count", async () => {
@@ -481,10 +592,10 @@ describe("sign request HTTP", () => {
     const data = (await response.json()) as any;
     expect(data.result.isError).not.toBe(true);
     const link = JSON.parse(data.result.content[0].text);
-    expect(link.summary.resolution_window_minutes).toBe(17);
+    expect(link.summary.resolution_window_minutes).toBeGreaterThanOrEqual(22);
     const request = store.get(link.url.split("/").at(-1)!)!;
     expect(JSON.parse(request.spec_json).retry).toEqual({
-      max_attempts: 4,
+      max_attempts: 5,
       every: "3m",
     });
   });

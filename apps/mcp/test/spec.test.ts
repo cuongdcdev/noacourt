@@ -30,6 +30,12 @@ describe("canonical rules and prelint", () => {
     expect(a.rules_text_hash).toBe(sha256(a.rules_markdown));
     expect(a.spec_hash).toBe(sha256(a.spec_json));
     expect(a.spec_json).toContain('"rules_text_hash"');
+    const simulated = renderRules(examples.A1, `sha256:${"a".repeat(64)}`);
+    expect(simulated.rules_markdown).toBe(a.rules_markdown);
+    expect(simulated.spec_hash).toBe(a.spec_hash);
+    expect(simulated.preflight.simulated).toBe(true);
+    const { retry: _retry, ...withoutRetry } = examples.A1;
+    expect(renderRules(withoutRetry).spec_json).toBe(a.spec_json);
   });
   it("renders source labels, operators, buckets, and URL-only identity", () => {
     const rules = renderRules({

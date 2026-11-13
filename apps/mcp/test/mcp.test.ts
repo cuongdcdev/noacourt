@@ -13,6 +13,16 @@ import type { CourtClient } from "../src/court/client.js";
 const dir = mkdtempSync(join(tmpdir(), "noacourt-mcp-"));
 const wasmPath = join(dir, "resolver.wasm");
 writeFileSync(wasmPath, "fake-wasm");
+writeFileSync(
+  join(dir, "keeper.log"),
+  JSON.stringify({
+    ts: "2026-11-13T08:00:00Z",
+    action: "trigger",
+    id: "noa:7",
+    tx_hash: "a".repeat(32),
+    status: "success",
+  }) + "\n",
+);
 const config = {
   ...loadConfig(),
   dataDir: dir,
@@ -26,6 +36,17 @@ const rpc = {
   view: vi.fn(async (_account: string, method: string) =>
     method === "get_market" ? { id: 7, status: "Active" } : null,
   ),
+  txStatus: vi.fn(async () => ({
+    receipts_outcome: [
+      {
+        outcome: {
+          logs: [
+            `EVENT_JSON:${JSON.stringify({ standard: "near-outlayer", event: "execution_requested", data: [{ request_data: JSON.stringify({ request_id: 37444 }) }] })}`,
+          ],
+        },
+      },
+    ],
+  })),
 } as unknown as NearRpc;
 const court = {
   resolverHash: vi.fn(() => null),
@@ -176,6 +197,8 @@ describe("MCP HTTP", () => {
       link_rejections_permanent: 0,
       link_rejections_pending: 0,
     });
+    expect(health).toHaveProperty("court_config_fetched_at");
+    expect(health).toHaveProperty("court_config_last_error");
   });
   it("initializes and lists exactly ten tools with input schemas", async () => {
     const init = await post({
@@ -211,6 +234,23 @@ describe("MCP HTTP", () => {
     ]);
     for (const entry of list.body.result.tools)
       expect(entry.inputSchema.type).toBe("object");
+    for (const entry of list.body.result.tools) {
+      expect(entry.annotations.destructiveHint).toBe(false);
+      expect(entry.annotations.readOnlyHint).toBe(
+        entry.name !== "market_create_link",
+      );
+      expect(entry.annotations.idempotentHint).toBe(
+        entry.name !== "market_create_link",
+      );
+      expect(entry.annotations.openWorldHint).toBe(
+        [
+          "source_sample",
+          "spec_simulate",
+          "market_status",
+          "verdict_get",
+        ].includes(entry.name),
+      );
+    }
   });
   it("returns guide and unknown catalog error", async () => {
     expect((await tool("court_guide", {})).content[0].text).toContain(
@@ -248,7 +288,10 @@ describe("MCP HTTP", () => {
     const result = await tool("spec_simulate", { spec: examples.A1 });
     expect(result.isError).not.toBe(true);
     expect(JSON.parse(result.content[0].text)).toMatchObject({
-      note: "if resolved now → Yes",
+      preview_using_latest_data: true,
+      note: expect.stringContaining(
+        "observation time not reached; result uses the latest available data",
+      ),
       verdict: { outcome: "Yes" },
     });
     const status = JSON.parse(
@@ -256,6 +299,21 @@ describe("MCP HTTP", () => {
     );
     expect(status.market.id).toBe(7);
     expect(status.links.noa).toContain("testnet.nearblocks.io");
+    expect(status.now_utc).toMatch(/Z$/);
+    expect(status.lifecycle).toBeTypeOf("string");
+    expect(status.outlayer_request_id).toBe("37444");
+    expect(status.outlayer_request_tx_url).toContain(
+      "testnet.nearblocks.io/txns/",
+    );
+    const missingVerdict = vi
+      .spyOn(court, "verdict")
+      .mockResolvedValueOnce(null);
+    const pending = JSON.parse(
+      (await tool("verdict_get", { market_id: 7 })).content[0].text,
+    );
+    expect(pending).toMatchObject({ status: "pending", request_id: "noa:7" });
+    expect(pending.next_step).toBeTypeOf("string");
+    missingVerdict.mockRestore();
   });
   it("rejects source_sample loopback and text_judge spend cap", async () => {
     const sample = await tool("source_sample", {

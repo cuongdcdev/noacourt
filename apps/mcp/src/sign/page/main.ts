@@ -8,7 +8,13 @@ import { setupIntearWallet } from "@near-wallet-selector/intear-wallet";
 type PublicRequest = {
   id: string;
   status: string;
-  params: { title: string; outcomes: string[]; stake: string };
+  params: {
+    title: string;
+    outcomes: string[];
+    stake: string;
+    token_id?: string;
+  };
+  sign_before?: string;
   rules_markdown: string;
   qr_url: string;
   result?: Record<string, any>;
@@ -63,7 +69,13 @@ function showResult(data: Record<string, any>) {
 async function getJson(url: string, init?: RequestInit) {
   const response = await fetch(url, init);
   const data = await response.json();
-  if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+  if (!response.ok) {
+    const error = new Error(
+      data.error || `HTTP ${response.status}`,
+    ) as Error & { status: number };
+    error.status = response.status;
+    throw error;
+  }
   return data;
 }
 
@@ -80,7 +92,18 @@ async function main() {
   }
   state.textContent = request.status;
   line("Outcomes", request.params.outcomes.join(" · "));
-  line("Stake", `${request.params.stake} NPOINT`);
+  line(
+    "Stake",
+    `${request.params.stake} ${request.params.token_id || "NPOINT"}`,
+  );
+  if (request.sign_before)
+    line(
+      "Sign before",
+      new Date(request.sign_before)
+        .toISOString()
+        .replace("T", " ")
+        .slice(0, 16) + " UTC",
+    );
   document.getElementById("rules")!.textContent = request.rules_markdown;
   const qr = document.getElementById("qr") as HTMLImageElement;
   const qrData = await getJson(`/api/sign/${encodeURIComponent(id)}/qr`);
@@ -191,6 +214,8 @@ async function main() {
     } catch (error) {
       state.textContent = (error as Error).message;
       state.className = "error";
+      if ((error as Error & { status?: number }).status === 409)
+        button?.remove();
     } finally {
       if (button) button.disabled = false;
     }

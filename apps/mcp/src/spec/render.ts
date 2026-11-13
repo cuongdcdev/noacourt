@@ -1,5 +1,6 @@
 import { effectiveExtract, sourceLabel } from "../catalog.js";
 import { jcs, parseSpec, sha256 } from "./canonical.js";
+import { DEFAULT_RETRY_POLICY } from "./defaults.js";
 
 const operatorWords: Record<string, string> = {
   ">=": "greater than or equal",
@@ -17,6 +18,7 @@ const print = (value: unknown) =>
 export function renderRules(input: unknown, simulatedSha?: string | null) {
   const spec = parseSpec(input);
   delete spec.rules_text_hash;
+  spec.retry = { ...DEFAULT_RETRY_POLICY, ...(spec.retry ?? {}) };
   const lines = [
     `# ${print(spec.question)}`,
     "",
@@ -64,7 +66,6 @@ export function renderRules(input: unknown, simulatedSha?: string | null) {
     `Outcome map: ${print(spec.outcome_map)}.`,
     `On unavailable (including missing/null): ${print(spec.on_unavailable)}.`,
     `Retry: ${print(spec.retry)}.`,
-    `Simulated with resolver sha256 ${simulatedSha || "unknown"}: ${simulatedSha ? "yes" : "no"}`,
   );
   const rules_markdown = lines.join("\n") + "\n";
   const rules_text_hash = sha256(rules_markdown);
@@ -75,5 +76,9 @@ export function renderRules(input: unknown, simulatedSha?: string | null) {
     rules_text_hash,
     spec_json,
     spec_hash: sha256(spec_json),
+    preflight: {
+      simulated: Boolean(simulatedSha),
+      resolver_sha256: simulatedSha ?? null,
+    },
   };
 }

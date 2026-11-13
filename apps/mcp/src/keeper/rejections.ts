@@ -8,6 +8,7 @@ export type Rejection = {
   attempts: number;
   next_retry_at: number | null;
   permanent: number;
+  tx_hash: string | null;
 };
 
 const RETRY_DELAYS_MS = [5, 15, 60].map((minutes) => minutes * 60_000);
@@ -44,8 +45,16 @@ export class RejectionStore {
         last_at INTEGER NOT NULL,
         attempts INTEGER NOT NULL,
         next_retry_at INTEGER,
-        permanent INTEGER NOT NULL
+        permanent INTEGER NOT NULL,
+        tx_hash TEXT
       )`);
+    for (const table of ["keeper_link_rejections", "keeper_void_rejections"]) {
+      const columns = db.prepare(`PRAGMA table_info(${table})`).all() as {
+        name: string;
+      }[];
+      if (!columns.some((column) => column.name === "tx_hash"))
+        db.exec(`ALTER TABLE ${table} ADD COLUMN tx_hash TEXT`);
+    }
   }
 
   private table(kind: "link" | "void"): string {
@@ -73,6 +82,7 @@ export class RejectionStore {
     reason: string,
     nowMs: number,
     permanent = false,
+    txHash: string | null = null,
   ): Rejection {
     const previous = this.get(kind, marketId);
     const attempts = (previous?.attempts ?? 0) + 1;
@@ -81,12 +91,12 @@ export class RejectionStore {
     this.db
       .prepare(
         `INSERT INTO ${this.table(kind)}
-          (market_id, reason, first_at, last_at, attempts, next_retry_at, permanent)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+          (market_id, reason, first_at, last_at, attempts, next_retry_at, permanent, tx_hash)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(market_id) DO UPDATE SET
            reason=excluded.reason, last_at=excluded.last_at,
            attempts=excluded.attempts, next_retry_at=excluded.next_retry_at,
-           permanent=excluded.permanent`,
+           permanent=excluded.permanent,tx_hash=excluded.tx_hash`,
       )
       .run(
         marketId,
@@ -96,6 +106,7 @@ export class RejectionStore {
         attempts,
         nextRetryAt,
         stopped ? 1 : 0,
+        txHash,
       );
     return this.get(kind, marketId)!;
   }

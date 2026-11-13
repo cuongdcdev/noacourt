@@ -10,6 +10,10 @@ import {
   type BuildInput,
 } from "./txBuilder.js";
 import { SignStore, type SignRequest } from "./store.js";
+import { calculateSignTiming, SignPlanConflictError } from "./timing.js";
+import { requiredResolutionWindowMinutes } from "./txBuilder.js";
+import { DEFAULT_RETRY_POLICY } from "../spec/defaults.js";
+import type { ActionHistory } from "../keeper/history.js";
 
 const STORAGE_BUFFER = 100_000_000_000_000_000_000_000n; // 0.1 NEAR, not refunded by Noa
 const DEFAULT_FEE = 500_000_000_000_000_000_000_000n; // Noa's current 0.5 NEAR default
@@ -20,21 +24,85 @@ export type SignDependencies = {
   rpc: NearRpc;
   court: CourtClient;
   signer: Pick<KeeperSigner, "send">;
+  history?: ActionHistory;
 };
 
 export async function createSignRequest(
   config: Config,
   store: SignStore,
   input: Omit<BuildInput, "court_contract" | "noa_contract">,
+  requestedAtMs = Date.now(),
 ) {
   if (new URL(config.publicBaseUrl).protocol !== "https:")
     throw new Error("PUBLIC_BASE_URL must use HTTPS");
-  const plan = buildCreateMarketTxs({
+  const nowMs = Date.now();
+  const spec = JSON.parse(input.spec_json) as Record<string, any>;
+  const observationAt = String(spec.observation?.at ?? "");
+  const requestedCloseAt =
+    input.requested_close_at ??
+    (input.duration_minutes !== undefined || input.duration_days !== undefined
+      ? new Date(
+          requestedAtMs +
+            (input.duration_minutes ?? (input.duration_days ?? 0) * 1440) *
+              60_000,
+        ).toISOString()
+      : observationAt);
+  const timing = calculateSignTiming({
+    observation_at: observationAt,
+    requested_close_at: requestedCloseAt,
+    now_ms: nowMs,
+    sign_margin_minutes: config.signMarginMinutes,
+  });
+  const requiredWindow = requiredResolutionWindowMinutes(
+    observationAt,
+    timing.expiration_estimate_at,
+    Math.max(
+      Number(spec.retry?.max_attempts ?? 0),
+      input.court_max_attempts ?? 0,
+    ) || DEFAULT_RETRY_POLICY.max_attempts,
+    spec.retry?.every ?? DEFAULT_RETRY_POLICY.every,
+  );
+  const resolutionWindow = Math.max(
+    input.resolution_window_minutes ?? requiredWindow,
+    requiredWindow,
+  );
+  const warnings: string[] = [];
+  if (
+    input.resolution_window_minutes !== undefined &&
+    input.resolution_window_minutes < requiredWindow
+  )
+    warnings.push(
+      `resolution_window_minutes ${input.resolution_window_minutes} is too short for observation time and retries; raised to ${requiredWindow} minutes.`,
+    );
+  if (timing.clipped)
+    warnings.push(
+      "Requested trading close was after observation.at; clipped to observation time.",
+    );
+  const params = {
     ...input,
+    requested_close_at: requestedCloseAt,
+    sign_before: timing.sign_before,
+    resolution_window_minutes: resolutionWindow,
+  };
+  const plan = buildCreateMarketTxs({
+    ...params,
+    duration_minutes: timing.duration_minutes,
+    duration_days: undefined,
+    observation_at: observationAt,
+    expiration_estimate_at: timing.expiration_estimate_at,
     court_contract: config.courtContract,
     noa_contract: config.noaContract,
   });
-  const request = store.create(input, input.spec_json, input.spec_hash, plan);
+  const expiresAt = new Date(
+    Math.min(nowMs + 24 * 60 * 60_000, Date.parse(timing.sign_before)),
+  ).toISOString();
+  const request = store.create(
+    params,
+    input.spec_json,
+    input.spec_hash,
+    plan,
+    expiresAt,
+  );
   const url = `${config.publicBaseUrl.replace(/\/$/, "")}/sign/${request.id}`;
   const qr_png_data_url = await QRCode.toDataURL(url, {
     type: "image/png",
@@ -45,6 +113,10 @@ export async function createSignRequest(
     qr_png_data_url,
     expires_at: request.expires_at,
     spec_hash: request.spec_hash,
+    sign_before: timing.sign_before,
+    requested_close_at: requestedCloseAt,
+    now_utc: new Date(nowMs).toISOString(),
+    warnings,
     summary: {
       title: input.title,
       outcomes: input.outcomes,
@@ -52,8 +124,8 @@ export async function createSignRequest(
       token_id: input.token_id || config.marketToken,
       duration_minutes: input.duration_minutes,
       duration_days: input.duration_days,
-      resolution_window_minutes:
-        plan.at(-1)?.actions[0]?.params.args.resolution_window_minutes,
+      resolution_window_minutes: resolutionWindow,
+      planned_duration_minutes: timing.duration_minutes,
     },
   };
 }
@@ -66,6 +138,8 @@ export function publicRequest(config: Config, request: SignRequest) {
     id: request.id,
     status: request.status,
     expires_at: request.expires_at,
+    sign_before: request.params.sign_before,
+    requested_close_at: request.params.requested_close_at,
     params: {
       title: request.params.title,
       outcomes: request.params.outcomes,
@@ -74,6 +148,7 @@ export function publicRequest(config: Config, request: SignRequest) {
       duration_days: request.params.duration_days,
       resolution_window_minutes: request.params.resolution_window_minutes,
       creator: request.params.creator,
+      token_id: request.params.token_id ?? config.marketToken,
     },
     spec_hash: request.spec_hash,
     rules_markdown: rendered.rules_markdown,
@@ -104,16 +179,51 @@ export async function planForAccount(
   accountId: string,
 ) {
   if (request.status !== "pending")
-    throw new Error(`sign request ${request.status}`);
+    throw new SignPlanConflictError(
+      `sign request ${request.status}; signing deadline passed`,
+    );
   if (!/^[a-z0-9._-]{2,64}$/.test(accountId))
     throw new Error("invalid NEAR account ID");
+  const spec = JSON.parse(request.spec_json) as Record<string, any>;
+  const observationAt = String(spec.observation?.at ?? "");
+  const requestedCloseAt =
+    request.params.requested_close_at ??
+    (request.params.duration_minutes !== undefined ||
+    request.params.duration_days !== undefined
+      ? new Date(
+          Date.parse(request.created_at) +
+            (request.params.duration_minutes ??
+              request.params.duration_days * 1440) *
+              60_000,
+        ).toISOString()
+      : observationAt);
+  const timing = calculateSignTiming({
+    observation_at: observationAt,
+    requested_close_at: requestedCloseAt,
+    now_ms: Date.now(),
+    sign_margin_minutes: deps.config.signMarginMinutes,
+  });
+  const requiredWindow = requiredResolutionWindowMinutes(
+    observationAt,
+    timing.expiration_estimate_at,
+    Math.max(
+      Number(spec.retry?.max_attempts ?? 0),
+      request.params.court_max_attempts ?? 0,
+    ) || DEFAULT_RETRY_POLICY.max_attempts,
+    spec.retry?.every ?? DEFAULT_RETRY_POLICY.every,
+  );
+  const resolutionWindow = Math.max(
+    request.params.resolution_window_minutes ?? 0,
+    requiredWindow,
+  );
+  const tokenId = request.params.token_id ?? deps.config.marketToken;
   const [feeExempt, balance, courtConfig, noaConfig] = await Promise.all([
     deps.rpc.view<boolean>(deps.config.noaContract, "is_fee_exempt", {
       account_id: accountId,
     }),
     deps.rpc.view<string>(deps.config.noaContract, "get_user_balance", {
       account_id: accountId,
-      token_id: deps.config.marketToken,
+      token_id: tokenId,
     }),
     deps.court.configView(),
     deps.rpc.view<Record<string, any>>(
@@ -126,9 +236,14 @@ export async function planForAccount(
   const createDeposit = feeExempt ? 0n : fee + STORAGE_BUFFER;
   const plan = buildCreateMarketTxs({
     ...(request.params as BuildInput),
+    duration_minutes: timing.duration_minutes,
+    duration_days: undefined,
+    observation_at: observationAt,
+    expiration_estimate_at: timing.expiration_estimate_at,
+    resolution_window_minutes: resolutionWindow,
     court_contract: deps.config.courtContract,
     noa_contract: deps.config.noaContract,
-    token_id: deps.config.marketToken,
+    token_id: tokenId,
     signer_id: accountId,
     internal_balance_yocto: String(balance),
     register_deposit_yocto: String(
@@ -139,6 +254,14 @@ export async function planForAccount(
   return {
     account_id: accountId,
     tx_plan: plan,
+    sign_before: timing.sign_before,
+    now_utc: new Date().toISOString(),
+    warnings:
+      resolutionWindow > (request.params.resolution_window_minutes ?? 0)
+        ? [
+            `Resolution window raised to ${resolutionWindow} minutes for current signing time.`,
+          ]
+        : [],
     note: feeExempt
       ? "Fee exempt; Noa creation deposit is zero"
       : "Noa charges its creation fee plus a 0.1 NEAR storage buffer and does not refund excess",
@@ -254,6 +377,42 @@ export async function completeSignRequest(
     link_tx_hash,
     link_error,
   };
+  for (const [index, hash] of txHashes.entries()) {
+    deps.history?.record({
+      item_id: `noa:${market_id}`,
+      action:
+        index === txHashes.length - 1
+          ? "create_market"
+          : index === txHashes.length - 2
+            ? "register_spec"
+            : "ft_transfer_call",
+      tx_hash: hash,
+      status: "success",
+      error: null,
+      ts: new Date().toISOString(),
+    });
+  }
+  if (link_tx_hash)
+    deps.history?.record({
+      item_id: `noa:${market_id}`,
+      action: "link_market",
+      tx_hash: link_tx_hash,
+      status: linked
+        ? "success"
+        : link_error?.includes("status pending")
+          ? "pending"
+          : "failure",
+      error: link_error,
+      ts: new Date().toISOString(),
+    });
+  if (
+    link_tx_hash &&
+    !linked &&
+    link_error &&
+    !link_error.includes("status pending") &&
+    !link_error.includes("status unknown")
+  )
+    deps.history?.recordLinkRejection(market_id, link_error, link_tx_hash);
   deps.store.complete(request.id, result);
   return result;
 }

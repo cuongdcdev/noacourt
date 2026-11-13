@@ -5,8 +5,10 @@ export class CourtClient {
   private cachedHash: string | null = null;
   private cachedNote: string | null = null;
   private cachedConfig: Record<string, any> | null = null;
-  private cachedAt = 0;
-  private loading = false;
+  private cachedAt: number | null = null;
+  private lastAttemptAt = Number.NEGATIVE_INFINITY;
+  private lastError: string | null = null;
+  private refreshing: Promise<string | null> | null = null;
   constructor(
     private config: Config,
     private rpc: NearRpc,
@@ -35,28 +37,32 @@ export class CourtClient {
   }
 
   async configView(): Promise<Record<string, any>> {
-    return this.rpc.view<Record<string, any>>(
-      this.config.courtContract,
-      "get_config",
-      {},
-    );
+    if (Date.now() - this.lastAttemptAt >= this.config.courtConfigRefreshMs)
+      await this.refresh();
+    if (!this.cachedConfig)
+      throw new Error(this.lastError ?? "Court config unavailable");
+    return this.cachedConfig;
   }
 
   async maxAttempts(): Promise<number | null> {
-    if (!this.cachedConfig || Date.now() - this.cachedAt > 30_000)
+    if (Date.now() - this.lastAttemptAt >= this.config.courtConfigRefreshMs)
       await this.refresh();
     const value = Number(this.cachedConfig?.max_attempts);
     return Number.isInteger(value) && value > 0 ? value : null;
   }
 
   resolverHash(): string | null {
-    if (Date.now() - this.cachedAt > 30_000 && !this.loading) {
-      this.loading = true;
-      void this.refresh().finally(() => {
-        this.loading = false;
-      });
-    }
     return this.cachedHash;
+  }
+
+  configStatus() {
+    return {
+      fetched_at:
+        this.cachedAt === null ? null : new Date(this.cachedAt).toISOString(),
+      last_error: this.lastError,
+      max_attempts: this.cachedConfig?.max_attempts ?? null,
+      min_deposit: this.cachedConfig?.min_deposit ?? null,
+    };
   }
 
   resolverStatus(): { hash: string | null; note: string | null } {
@@ -68,36 +74,56 @@ export class CourtClient {
     hash: string | null;
     note: string | null;
   }> {
-    if (Date.now() - this.cachedAt > 30_000) await this.refresh();
+    if (Date.now() - this.lastAttemptAt >= this.config.courtConfigRefreshMs)
+      await this.refresh();
     return { hash: this.cachedHash, note: this.cachedNote };
   }
 
-  async refresh(): Promise<string | null> {
+  refresh(): Promise<string | null> {
+    if (this.refreshing) return this.refreshing;
+    this.refreshing = this.fetchConfig().finally(() => {
+      this.refreshing = null;
+    });
+    return this.refreshing;
+  }
+
+  private async fetchConfig(): Promise<string | null> {
+    this.lastAttemptAt = Date.now();
     try {
-      const config = await this.configView();
-      this.cachedConfig = config;
+      const config = await this.rpc.view<Record<string, any>>(
+        this.config.courtContract,
+        "get_config",
+        {},
+      );
+      if (!config || typeof config !== "object")
+        throw new Error("Court get_config returned an invalid value");
       const source = config.resolver_source;
       const project =
         source && typeof source === "object" ? source.Project : null;
+      let hash: string | null;
+      let note: string | null;
       if (
         project &&
         typeof project === "object" &&
         project.version_key == null
       ) {
-        this.cachedHash = null;
-        this.cachedNote =
-          "Court resolver unpinned (OutLayer project latest version)";
+        hash = null;
+        note = "Court resolver unpinned (OutLayer project latest version)";
       } else {
-        this.cachedHash = findResolverHash(source) ?? findResolverHash(config);
-        this.cachedNote = this.cachedHash
-          ? null
-          : "Court resolver sha256 unavailable";
+        hash = findResolverHash(source) ?? findResolverHash(config);
+        note = hash ? null : "Court resolver sha256 unavailable";
       }
+      this.cachedConfig = config;
+      this.cachedHash = hash;
+      this.cachedNote = note;
       this.cachedAt = Date.now();
+      this.lastError = null;
       return this.cachedHash;
-    } catch {
-      this.cachedAt = Date.now();
-      this.cachedNote = "Court configuration unavailable";
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.lastError = this.config.nearAiApi
+        ? message.replaceAll(this.config.nearAiApi, "[redacted]")
+        : message;
       return this.cachedHash;
     }
   }
@@ -205,6 +231,86 @@ export function linkRejectionReason(outcome: unknown): string | null {
       } catch {
         /* malformed event is not a reason */
       }
+    }
+  }
+  return null;
+}
+
+function requestId(value: unknown, depth = 0): string | null {
+  if (depth > 5 || value == null) return null;
+  if (typeof value === "string") {
+    try {
+      return requestId(JSON.parse(value), depth + 1);
+    } catch {
+      return null;
+    }
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const found = requestId(entry, depth + 1);
+      if (found !== null) return found;
+    }
+    return null;
+  }
+  if (typeof value !== "object") return null;
+  const object = value as Record<string, unknown>;
+  for (const key of [
+    "request_id",
+    "requestId",
+    "execution_id",
+    "executionId",
+    "id",
+  ]) {
+    const candidate = object[key];
+    if (typeof candidate === "string" || typeof candidate === "number")
+      return String(candidate);
+  }
+  for (const key of [
+    "request_data",
+    "execution",
+    "request",
+    "data",
+    "metadata",
+  ]) {
+    const found = requestId(object[key], depth + 1);
+    if (found !== null) return found;
+  }
+  return null;
+}
+
+export function outlayerRequestIdFromVerdict(verdict: unknown): string | null {
+  const outlayer = (verdict as Record<string, any> | null)?.outlayer;
+  return requestId(outlayer);
+}
+
+export function outlayerRequestIdFromTx(outcome: unknown): string | null {
+  const root = outcome as Record<string, any> | null;
+  const receipts = [
+    root?.transaction_outcome,
+    ...(root?.receipts_outcome ?? []),
+  ];
+  for (const receipt of receipts) {
+    for (const line of receipt?.outcome?.logs ?? []) {
+      if (typeof line !== "string") continue;
+      if (line.startsWith("EVENT_JSON:")) {
+        try {
+          const event = JSON.parse(line.slice("EVENT_JSON:".length)) as Record<
+            string,
+            any
+          >;
+          if (
+            event.standard !== "near-outlayer" ||
+            event.event !== "execution_requested"
+          )
+            continue;
+          const found = requestId(event.data);
+          if (found !== null) return found;
+        } catch {
+          continue;
+        }
+      }
+      const match = /request_id:\s*(\d+)/i.exec(line);
+      if (match) return match[1];
     }
   }
   return null;

@@ -16,6 +16,11 @@ const positiveNumber = (name: string, fallback: number) => {
   if (value <= 0) throw new Error(`Invalid ${name}`);
   return value;
 };
+const nonnegativeInteger = (name: string, fallback: number) => {
+  const value = number(name, fallback);
+  if (!Number.isInteger(value)) throw new Error(`Invalid ${name}`);
+  return value;
+};
 const wasmCandidates = [
   resolve(root, "target/wasm32-wasip2/release/resolver.wasm"),
   resolve(root, "resolver/target/wasm32-wasip2/release/resolver.wasm"),
@@ -64,6 +69,8 @@ export function loadConfig() {
     keeperIntervalMs: number("KEEPER_INTERVAL_MS", 30000),
     txPollTimeoutMs: positiveNumber("TX_POLL_TIMEOUT_MS", 90000),
     txPollIntervalMs: positiveNumber("TX_POLL_INTERVAL_MS", 2500),
+    courtConfigRefreshMs: positiveNumber("COURT_CONFIG_REFRESH_MS", 60000),
+    signMarginMinutes: nonnegativeInteger("SIGN_MARGIN_MINUTES", 3),
     triggerGraceSeconds: number("TRIGGER_GRACE_SECONDS", 70),
     keeperEnabled: env("KEEPER_ENABLED", "1") === "1",
   };

@@ -33,10 +33,12 @@ export class SignStore {
     specJson: string,
     specHash: string,
     txPlan: WalletTransaction[],
+    expiresAt?: string,
   ): SignRequest {
     const id = randomBytes(16).toString("base64url");
     const created_at = new Date().toISOString();
-    const expires_at = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const expires_at =
+      expiresAt ?? new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
     this.db
       .prepare("INSERT INTO sign_requests VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
       .run(

@@ -10,7 +10,7 @@ import type { Config } from "./config.js";
 import { catalog, catalogParamSchemas } from "./catalog.js";
 import { courtGuide } from "./guide.js";
 import { NearRpc } from "./near/rpc.js";
-import { CourtClient } from "./court/client.js";
+import { CourtClient, outlayerRequestIdFromTx } from "./court/client.js";
 import { WasmRunner } from "./resolver/wasm.js";
 import { RateLimiter, SpendCounter } from "./ratelimit.js";
 import { jcs, parseSpec } from "./spec/canonical.js";
@@ -19,10 +19,8 @@ import { DEFAULT_RETRY_POLICY } from "./spec/defaults.js";
 import { renderRules } from "./spec/render.js";
 import { rawSample } from "./source.js";
 import { SignStore } from "./sign/store.js";
-import {
-  decimalToUnits,
-  requiredResolutionWindowMinutes,
-} from "./sign/txBuilder.js";
+import { decimalToUnits } from "./sign/txBuilder.js";
+import { SignPlanConflictError } from "./sign/timing.js";
 import {
   completeSignRequest,
   createSignRequest,
@@ -32,6 +30,8 @@ import {
 import { signPage } from "./sign/page/html.js";
 import { KeeperSigner } from "./near/signer.js";
 import { KeeperLoop } from "./keeper/loop.js";
+import { ActionHistory } from "./keeper/history.js";
+import { lifecycle, outlayerDetails, withIso } from "./status.js";
 
 const specSchema = z
   .union([z.string(), z.record(z.unknown())])
@@ -101,9 +101,71 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
   const wasm = deps.wasm || new WasmRunner(config);
   const spend = deps.spend || new SpendCounter(config);
   const store = deps.store || new SignStore(config);
+  const history = new ActionHistory(config);
   const signer = deps.signer || new KeeperSigner(config, rpc);
-  const signDeps = { config, store, rpc, court, signer };
-  const keeper = new KeeperLoop({ config, rpc, court, signer, wasm, spend });
+  const signDeps = { config, store, rpc, court, signer, history };
+  const keeper = new KeeperLoop({
+    config,
+    rpc,
+    court,
+    signer,
+    wasm,
+    spend,
+    history,
+  });
+  let refreshRunning = false;
+  const refreshCourtConfig = () => {
+    if (refreshRunning) return;
+    refreshRunning = true;
+    const work = [wasm.hash(), wasm.publishedHash()];
+    if (typeof court.refresh === "function") work.push(court.refresh());
+    void Promise.allSettled(work).finally(() => {
+      refreshRunning = false;
+    });
+  };
+  refreshCourtConfig();
+  const courtRefreshTimer = setInterval(
+    refreshCourtConfig,
+    config.courtConfigRefreshMs,
+  );
+  courtRefreshTimer.unref();
+  const outlayerIdCache = new Map<string, { id: string; txHash: string }>();
+  const outlayerInfo = async (id: string, verdict: unknown) => {
+    const details = outlayerDetails(verdict);
+    if (details.outlayer_request_id !== null) return details;
+    const actions = history
+      .forItem(id)
+      .filter((entry) => ["trigger", "trigger_request"].includes(entry.action));
+    let known = outlayerIdCache.get(id);
+    if (known && actions.at(-1)?.tx_hash !== known.txHash) known = undefined;
+    if (!known) {
+      for (const action of actions.slice(-1)) {
+        try {
+          const outcome = await rpc.txStatus(
+            action.tx_hash,
+            config.keeperAccount,
+            "EXECUTED_OPTIMISTIC",
+          );
+          const requestId = outlayerRequestIdFromTx(outcome);
+          if (requestId !== null) {
+            known = { id: requestId, txHash: action.tx_hash };
+            outlayerIdCache.set(id, known);
+            break;
+          }
+        } catch {
+          // A missing or temporarily unavailable transaction does not hide the verdict.
+        }
+      }
+    }
+    return {
+      ...details,
+      outlayer_request_id: known?.id ?? null,
+      outlayer_request_tx_hash: known?.txHash ?? null,
+      outlayer_request_tx_url: known
+        ? `https://testnet.nearblocks.io/txns/${encodeURIComponent(known.txHash)}`
+        : null,
+    };
+  };
   const requestLimit = new RateLimiter(config.rateLimitPerMin);
   const simulateLimit = new RateLimiter(config.simulateLimitPerMin);
   const fixtureLimit = new RateLimiter(600);
@@ -214,7 +276,9 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
         return;
       }
       if (request.status !== "pending") {
-        res.status(410).json({ error: request.status });
+        res.status(409).json({
+          error: `sign request ${request.status}; signing deadline passed`,
+        });
         return;
       }
       res.json(
@@ -225,7 +289,9 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
         ),
       );
     } catch (error) {
-      res.status(400).json({ error: (error as Error).message });
+      res
+        .status(error instanceof SignPlanConflictError ? 409 : 400)
+        .json({ error: (error as Error).message });
     }
   });
   app.post("/api/sign/:id/complete", async (req, res) => {
@@ -336,7 +402,11 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
     return {
       verdict,
       ...hashes,
-      note: `if resolved now → ${outcome ?? "unavailable"}`,
+      preview_using_latest_data: Date.now() < Date.parse(spec.observation.at),
+      note:
+        Date.now() < Date.parse(spec.observation.at)
+          ? `observation time not reached; result uses the latest available data and may change. If resolved now → ${outcome ?? "unavailable"}`
+          : `if resolved now → ${outcome ?? "unavailable"}`,
     };
   };
 
@@ -349,6 +419,15 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
       typeof (court as any).resolverStatus === "function"
         ? court.resolverStatus()
         : { hash: court.resolverHash(), note: null };
+    const courtConfig =
+      typeof court.configStatus === "function"
+        ? court.configStatus()
+        : {
+            fetched_at: null,
+            last_error: null,
+            max_attempts: null,
+            min_deposit: null,
+          };
     res.json({
       ok: true,
       version: "0.1.0",
@@ -360,6 +439,10 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
       },
       court_resolver_sha256: resolver.hash,
       court_resolver_note: resolver.note,
+      court_config_fetched_at: courtConfig.fetched_at,
+      court_config_last_error: courtConfig.last_error,
+      court_max_attempts: courtConfig.max_attempts,
+      court_min_deposit: courtConfig.min_deposit,
       keeper: {
         enabled: config.keeperEnabled,
         last_tick_at: keeper.lastTickAt,
@@ -393,7 +476,21 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
     ) =>
       server.registerTool(
         name,
-        { description, inputSchema: schema },
+        {
+          description,
+          inputSchema: schema,
+          annotations: {
+            readOnlyHint: name !== "market_create_link",
+            destructiveHint: false,
+            idempotentHint: name !== "market_create_link",
+            openWorldHint: [
+              "source_sample",
+              "spec_simulate",
+              "market_status",
+              "verdict_get",
+            ].includes(name),
+          },
+        },
         fn as any,
       );
     register(
@@ -421,10 +518,7 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
               ...found,
               param_json_schema: catalogParamSchemas[name],
               spec_retry_template: { ...DEFAULT_RETRY_POLICY },
-              recommended_resolution_window_minutes:
-                requiredResolutionWindowMinutes({
-                  retry: DEFAULT_RETRY_POLICY,
-                }),
+              recommended_resolution_window_minutes: 20,
             })
           : failed(
               `Unknown catalog tool ${name}. Valid names: ${catalog.map((item) => item.name).join(", ")}`,
@@ -579,35 +673,76 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
     );
     register(
       "market_create_link",
-      "Validate a market and spec, then create a wallet sign URL; never requests or accepts private keys.",
+      "Validate a market and spec, then store a wallet sign URL. This tool sends no transaction and never requests private keys; the user signs later in a wallet.",
       {
-        title: z.string().max(200),
-        outcomes: z.array(z.string().max(50)).min(2).max(10),
-        stake: z.string().describe("Human NPOINT amount; 18 decimals"),
-        duration_minutes: z.number().int().optional(),
-        duration_days: z.number().int().optional(),
-        resolution_window_minutes: z.number().int().optional(),
-        spec: specSchema,
-        creator: z.string().optional(),
+        title: z
+          .string()
+          .max(200)
+          .describe("Market question/title, at most 200 characters."),
+        outcomes: z
+          .array(z.string().max(50))
+          .min(2)
+          .max(10)
+          .describe("Ordered labels; must exactly equal spec.outcomes."),
+        stake: z
+          .string()
+          .describe(
+            "Human token amount, usually NPOINT (18 decimals); no yocto conversion needed.",
+          ),
+        duration_minutes: z
+          .number()
+          .int()
+          .optional()
+          .describe(
+            "Optional trading duration from link creation, clipped at observation.at; the signer plan recalculates remaining minutes.",
+          ),
+        duration_days: z
+          .number()
+          .int()
+          .optional()
+          .describe(
+            "Optional trading duration in days from link creation; do not provide together with duration_minutes.",
+          ),
+        resolution_window_minutes: z
+          .number()
+          .int()
+          .optional()
+          .describe(
+            "Optional resolution window; computed from observation.at and retries at signing time. Larger values are allowed.",
+          ),
+        spec: specSchema.describe(
+          "ResolutionSpec v1 object or JSON string; outcomes and observation.at control timing.",
+        ),
+        creator: z
+          .string()
+          .optional()
+          .describe(
+            "Optional creator account hint for display or fee preview; the actual creator is whoever signs.",
+          ),
+        token_id: z
+          .string()
+          .optional()
+          .describe(
+            "Noa-whitelisted token contract; defaults to point.noamarket.testnet (NPOINT).",
+          ),
       },
       async (args) =>
         guard(async () => {
+          const requestedAtMs = Date.now();
           const originalSpec = parseSpec(args.spec);
+          const rendered = renderRules(originalSpec);
+          const spec = parseSpec(rendered.spec_json);
           const configuredAttempts =
             originalSpec.retry?.max_attempts == null &&
             typeof court.maxAttempts === "function"
               ? await court.maxAttempts().catch(() => null)
               : null;
-          const maxAttempts =
-            configuredAttempts ?? DEFAULT_RETRY_POLICY.max_attempts;
-          const spec: Record<string, any> = {
-            ...originalSpec,
-            retry: {
-              ...DEFAULT_RETRY_POLICY,
-              ...originalSpec.retry,
-              max_attempts: originalSpec.retry?.max_attempts ?? maxAttempts,
-            },
-          };
+          const maxAttempts = Math.max(
+            Number(
+              spec.retry?.max_attempts ?? DEFAULT_RETRY_POLICY.max_attempts,
+            ),
+            configuredAttempts ?? 0,
+          );
           const checked = await lint(spec);
           if (!checked.ok)
             throw new Error(
@@ -620,60 +755,83 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
           if (!args.title.trim() || args.title.length > 200)
             throw new Error("title must be 1–200 characters");
           if (
-            (args.duration_minutes === undefined) ===
-            (args.duration_days === undefined)
+            args.duration_minutes !== undefined &&
+            args.duration_days !== undefined
           )
-            throw new Error("provide exactly one duration: minutes or days");
+            throw new Error("provide at most one duration: minutes or days");
           const minutes =
-            args.duration_minutes ?? (args.duration_days || 0) * 1440;
-          if (minutes < 5 || minutes > 365 * 1440)
-            throw new Error("duration must be 5 minutes to 365 days");
-          const requiredWindow = requiredResolutionWindowMinutes(
-            spec,
-            maxAttempts,
-          );
-          const requestedWindow = args.resolution_window_minutes;
-          const resolutionWindow = Math.max(
-            requestedWindow ?? requiredWindow,
-            requiredWindow,
-          );
-          const warnings =
-            requestedWindow !== undefined && requestedWindow < requiredWindow
-              ? [
-                  `resolution_window_minutes ${requestedWindow} is too short for spec retries and Noa's 10-minute minimum; raised to ${requiredWindow} minutes (max_attempts × retry.every + 5 minutes, rounded up).`,
-                ]
-              : [];
-          if (Date.now() + minutes * 60_000 > Date.parse(spec.observation.at))
-            throw new Error("market expiration must be <= spec.observation.at");
+            args.duration_minutes ?? (args.duration_days ?? 0) * 1440;
           if (
-            !/^\d+(?:\.\d{1,18})?$/.test(args.stake) ||
-            BigInt(decimalToUnits(args.stake, 18)) <= 0n
+            (args.duration_minutes !== undefined ||
+              args.duration_days !== undefined) &&
+            (minutes < 5 || minutes > 365 * 1440)
+          )
+            throw new Error("duration must be 5 minutes to 365 days");
+          const tokenId = args.token_id ?? config.marketToken;
+          let tokenDecimals = 18;
+          try {
+            const tokens = await rpc.view<
+              { token_id: string; decimals: number; is_active: boolean }[]
+            >(config.noaContract, "get_whitelisted_tokens", {});
+            const token = tokens.find(
+              (item) => item.token_id === tokenId && item.is_active,
+            );
+            if (!token)
+              throw new Error(
+                `token_id ${tokenId} is not an active Noa-whitelisted token`,
+              );
+            tokenDecimals = token.decimals;
+          } catch (error) {
+            if (
+              error instanceof Error &&
+              error.message.includes("not an active Noa-whitelisted token")
+            )
+              throw error;
+            if (tokenId !== config.marketToken)
+              throw new Error(
+                "Could not verify token whitelist; only the configured market token is available",
+              );
+          }
+          if (
+            !/^\d+(?:\.\d+)?$/.test(args.stake) ||
+            BigInt(decimalToUnits(args.stake, tokenDecimals)) <= 0n
           )
             throw new Error(
-              "stake must be a positive NPOINT amount with at most 18 decimals",
+              `stake must be a positive token amount with at most ${tokenDecimals} decimals`,
             );
-          const rendered = renderRules(spec);
-          const link = await createSignRequest(config, store, {
-            spec_json: rendered.spec_json,
-            spec_hash: rendered.spec_hash,
-            title: args.title,
-            outcomes: args.outcomes,
-            stake: args.stake,
-            token_id: config.marketToken,
-            token_decimals: 18,
-            duration_minutes: args.duration_minutes,
-            duration_days: args.duration_days,
-            resolution_window_minutes: resolutionWindow,
-            court_max_attempts: maxAttempts,
-            creator: args.creator,
-          });
+          const hashWarnings =
+            typeof originalSpec.rules_text_hash === "string" &&
+            originalSpec.rules_text_hash !== rendered.rules_text_hash
+              ? [
+                  "Incoming rules_text_hash differed from deterministic rules; recomputed it.",
+                ]
+              : [];
+          const link = await createSignRequest(
+            config,
+            store,
+            {
+              spec_json: rendered.spec_json,
+              spec_hash: rendered.spec_hash,
+              title: args.title,
+              outcomes: args.outcomes,
+              stake: args.stake,
+              token_id: tokenId,
+              token_decimals: tokenDecimals,
+              duration_minutes: args.duration_minutes,
+              duration_days: args.duration_days,
+              resolution_window_minutes: args.resolution_window_minutes,
+              court_max_attempts: maxAttempts,
+              creator: args.creator,
+            },
+            requestedAtMs,
+          );
           return {
             ...link,
-            warnings,
+            warnings: [...link.warnings, ...hashWarnings],
             text:
-              warnings.length > 0
-                ? warnings.join("\n")
-                : `Resolution window: ${resolutionWindow} minutes.`,
+              [...link.warnings, ...hashWarnings].length > 0
+                ? [...link.warnings, ...hashWarnings].join("\n")
+                : `Sign before ${link.sign_before}; resolution window ${link.summary.resolution_window_minutes} minutes.`,
           };
         })(),
     );
@@ -698,11 +856,29 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
             court.market(market_id),
             court.verdict(`noa:${market_id}`),
           ]);
+          const courtItem = court_market as Record<string, any> | null;
+          const specEntry = courtItem?.spec_hash
+            ? await court.spec(String(courtItem.spec_hash))
+            : null;
+          const rejection = history.linkRejection(market_id);
           return {
-            market,
-            pending_resolution,
-            court_market,
-            verdict,
+            now_utc: new Date().toISOString(),
+            market: withIso(market),
+            pending_resolution: withIso(pending_resolution),
+            court_market: withIso(court_market),
+            verdict: withIso(verdict),
+            spec: withIso(specEntry),
+            link_rejection: rejection,
+            actions: history.forItem(`noa:${market_id}`),
+            ...(await outlayerInfo(`noa:${market_id}`, verdict)),
+            ...lifecycle({
+              noa: market as Record<string, any>,
+              court: court_market,
+              pending: pending_resolution as Record<string, any>,
+              rejection,
+              spec: specEntry,
+              graceSeconds: config.triggerGraceSeconds,
+            }),
             links: {
               noa: `https://testnet.nearblocks.io/address/${config.noaContract}`,
               court: `https://testnet.nearblocks.io/address/${config.courtContract}`,
@@ -722,13 +898,54 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
           const id =
             request_id || (market_id !== undefined ? `noa:${market_id}` : null);
           if (!id) throw new Error("market_id or request_id is required");
-          const verdict = await court.verdict(id);
-          if (!verdict) throw new Error(`Court verdict ${id} not found`);
+          const [verdict, courtItem, noa, pending] = await Promise.all([
+            court.verdict(id),
+            request_id ? court.request(id) : court.market(market_id!),
+            market_id === undefined
+              ? null
+              : rpc.view<unknown>(config.noaContract, "get_market", {
+                  market_id,
+                }),
+            market_id === undefined
+              ? null
+              : rpc.view<unknown>(
+                  config.noaContract,
+                  "get_pending_resolution",
+                  { market_id },
+                ),
+          ]);
+          const item = courtItem as Record<string, any> | null;
+          const specEntry = item?.spec_hash
+            ? await court.spec(String(item.spec_hash))
+            : null;
+          const rejection =
+            market_id === undefined ? null : history.linkRejection(market_id);
+          const phase = lifecycle({
+            noa: noa as Record<string, any>,
+            court: courtItem,
+            pending: pending as Record<string, any>,
+            rejection,
+            spec: specEntry,
+            graceSeconds: config.triggerGraceSeconds,
+            genericRequest: request_id !== undefined,
+          });
           return {
             request_id: id,
-            verdict,
-            court_request: request_id ? await court.request(request_id) : null,
+            status: verdict ? "resolved" : "pending",
+            now_utc: new Date().toISOString(),
+            verdict: withIso(verdict),
+            court_request: request_id ? withIso(courtItem) : null,
+            court_market: market_id === undefined ? null : withIso(courtItem),
+            spec: withIso(specEntry),
+            actions: history.forItem(id),
+            ...(await outlayerInfo(id, verdict)),
+            ...phase,
+            eta_utc: verdict ? null : phase.next_action_at_utc,
             link: `https://testnet.nearblocks.io/address/${config.courtContract}`,
+            links: {
+              court: `https://testnet.nearblocks.io/address/${config.courtContract}`,
+              noa: `https://testnet.nearblocks.io/address/${config.noaContract}`,
+            },
           };
         })(),
     );
@@ -769,7 +986,9 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
   return {
     app,
     close: () => {
+      clearInterval(courtRefreshTimer);
       keeper.stop();
+      history.close();
       store.close();
       spend.close();
     },

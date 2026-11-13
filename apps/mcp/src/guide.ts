@@ -120,7 +120,9 @@ export function courtGuide(): string {
   const currentExamples = makeExamples();
   return `# Noa Court drafting guide
 
-Flow: lint → simulate → rules_render → market_create_link → user signs in their wallet. The server never needs a creator private key. Integration: docs/ARCHITECTURE.md §5–§7.
+now_utc: ${new Date().toISOString()}.
+
+Flow: lint → simulate → rules_render → market_create_link → user signs in their wallet. The server never needs a creator private key. The sign link states a sign-before time, and its plan is recalculated when the user signs. Integration: docs/ARCHITECTURE.md §5–§7.
 
 ## Drafting rules
 1. Find an official or first-party source first.
@@ -142,7 +144,7 @@ Catalog: ${catalog.map((tool) => `${tool.name} (${tool.kind}: ${tool.summary})`)
 
 Decide kinds: threshold (>=, >, <=, <), buckets (half-open [lower, upper)), equals, bool, change (up/down/tie), text_judge (yes/no with criteria, window, and default_if_no_evidence set to the lowercase result key "yes" or "no"). Lint checks: observation after market close, bucket coverage, snapshot max_delay, two price sources, http_json identity, GitHub repo_id identity, outcome_map coverage, change baseline before observation, 2–10 outcomes.
 
-Default retry policy: max_attempts 5, every 3m. Set resolution_window_minutes to at least max(10 minutes, max_attempts × retry.every + 5 minutes), rounded up; for the default this is 5 × 3m + 5m = 20 minutes. A shorter requested window is raised with a warning by market_create_link.
+Default retry policy: max_attempts 5, every 3m. The Court deadline floor is observation.at + 5 × 3m + 5m = 20 minutes after observation. The sign plan computes the window from its estimated market expiration to that deadline, with 2 extra minutes of margin. A shorter requested window is raised with a warning by market_create_link. Sign before the deadline on the sign page; a late plan is refused.
 
 Noa constraints: 2–10 outcomes; title at most 200 characters; outcome at most 50 characters; market duration at least 5 minutes; resolution window at least 10 minutes and large enough for retries; market.expiration must be <= spec.observation.at. Market token ${"point.noamarket.testnet"} is NPOINT with 18 decimals.
 

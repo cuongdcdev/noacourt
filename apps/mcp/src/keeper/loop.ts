@@ -20,6 +20,7 @@ import {
   type KeeperAction,
 } from "./decision.js";
 import { classifyLinkRejection, RejectionStore } from "./rejections.js";
+import { ActionHistory } from "./history.js";
 
 export type KeeperDeps = {
   config: Config;
@@ -29,11 +30,14 @@ export type KeeperDeps = {
   wasm: WasmRunner;
   spend: SpendCounter;
   now?: () => number;
+  history?: ActionHistory;
 };
 
 export class KeeperLoop {
   private db: DatabaseSync;
   private rejections: RejectionStore;
+  private history: ActionHistory;
+  private ownsHistory: boolean;
   private activeMarkets = new Set<number>();
   private activeRequests = new Set<string>();
   private recent = new Map<string, number>();
@@ -69,6 +73,8 @@ export class KeeperLoop {
       "CREATE TABLE IF NOT EXISTS keeper_active_requests (id TEXT PRIMARY KEY)",
     );
     this.rejections = new RejectionStore(this.db);
+    this.history = deps.history ?? new ActionHistory(deps.config);
+    this.ownsHistory = !deps.history;
     this.marketCursor = Number(
       (
         this.db
@@ -114,6 +120,15 @@ export class KeeperLoop {
       ...fields,
     });
     try {
+      if (typeof fields.id === "string" && typeof fields.tx_hash === "string")
+        this.history.record({
+          item_id: fields.id,
+          action,
+          tx_hash: fields.tx_hash,
+          status: String(fields.status ?? fields.result ?? "unknown"),
+          error: fields.error == null ? null : String(fields.error),
+          ts: new Date().toISOString(),
+        });
       appendFileSync(
         join(this.deps.config.dataDir, "keeper.log"),
         (secret ? line.replaceAll(secret, "[redacted]") : line) + "\n",
@@ -155,6 +170,7 @@ export class KeeperLoop {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     this.db.close();
+    if (this.ownsHistory) this.history.close();
   }
 
   async tick(): Promise<void> {
@@ -606,6 +622,7 @@ export class KeeperLoop {
       reason,
       this.nowMs(),
       classification === "permanent",
+      txHash ?? null,
     );
     this.updateRejectionCounts();
     this.log("link_market", {

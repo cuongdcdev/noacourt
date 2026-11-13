@@ -2,6 +2,10 @@
   "name": "@noacourt/mcp",
   "version": "0.1.0",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cuongdcdev/noa-court"
+  },
   "type": "module",
   "exports": {
     ".": "./dist/lib.js"

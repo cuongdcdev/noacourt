@@ -27,6 +27,9 @@ export type BuildInput = {
   duration_days?: number;
   resolution_window_minutes?: number;
   court_max_attempts?: number;
+  observation_at?: string;
+  expiration_estimate_at?: string;
+  requested_close_at?: string;
   court_contract: string;
   noa_contract: string;
   register_deposit_yocto?: string;
@@ -37,19 +40,13 @@ export type BuildInput = {
 };
 
 export function requiredResolutionWindowMinutes(
-  spec: unknown,
-  courtMaxAttempts: number = DEFAULT_RETRY_POLICY.max_attempts,
+  observationAt: string,
+  expirationEstimateAt: string,
+  attempts: number,
+  every: string,
 ): number {
-  const parsed =
-    typeof spec === "string" ? (JSON.parse(spec) as unknown) : spec;
-  const retry =
-    parsed && typeof parsed === "object"
-      ? (parsed as Record<string, any>).retry
-      : undefined;
-  const attempts = retry?.max_attempts ?? courtMaxAttempts;
   if (!Number.isSafeInteger(attempts) || attempts < 1)
     throw new Error("retry max_attempts must be a positive integer");
-  const every = retry?.every ?? DEFAULT_RETRY_POLICY.every;
   const match = typeof every === "string" && /^(\d+)(s|m|h|d)$/.exec(every);
   if (!match)
     throw new Error("retry.every must be a duration using s, m, h, or d");
@@ -57,7 +54,17 @@ export function requiredResolutionWindowMinutes(
     match[2] as "s" | "m" | "h" | "d"
   ];
   const retrySeconds = BigInt(match[1]) * multiplier;
-  const minutes = (BigInt(attempts) * retrySeconds + 300n + 59n) / 60n;
+  const observation = Date.parse(observationAt);
+  const expiration = Date.parse(expirationEstimateAt);
+  if (!Number.isFinite(observation) || !Number.isFinite(expiration))
+    throw new Error("observation and expiration estimates must be UTC times");
+  if (expiration > observation)
+    throw new Error("market expiration estimate must be <= observation.at");
+  const requiredMs =
+    BigInt(observation - expiration) +
+    BigInt(attempts) * retrySeconds * 1000n +
+    7n * 60_000n;
+  const minutes = (requiredMs + 59_999n) / 60_000n;
   if (minutes > BigInt(Number.MAX_SAFE_INTEGER))
     throw new Error("required resolution window is too large");
   return Math.max(10, Number(minutes));
@@ -108,9 +115,29 @@ export function buildCreateMarketTxs(input: BuildInput): WalletTransaction[] {
     (input.duration_days === undefined)
   )
     throw new Error("provide exactly one duration");
+  const spec = JSON.parse(input.spec_json) as Record<string, any>;
+  const observationAt = input.observation_at ?? spec.observation?.at;
+  if (typeof observationAt !== "string")
+    throw new Error("spec.observation.at is required for the transaction plan");
+  const durationMinutes =
+    input.duration_minutes ?? (input.duration_days ?? 0) * 1440;
+  if (
+    !Number.isSafeInteger(durationMinutes) ||
+    durationMinutes < 5 ||
+    durationMinutes > 365 * 1440
+  )
+    throw new Error("market duration must be 5 minutes to 365 days");
+  const expirationEstimateAt =
+    input.expiration_estimate_at ??
+    new Date(Date.now() + durationMinutes * 60_000).toISOString();
   const requiredWindow = requiredResolutionWindowMinutes(
-    input.spec_json,
-    input.court_max_attempts,
+    observationAt,
+    expirationEstimateAt,
+    Math.max(
+      Number(spec.retry?.max_attempts ?? 0),
+      input.court_max_attempts ?? 0,
+    ) || DEFAULT_RETRY_POLICY.max_attempts,
+    spec.retry?.every ?? DEFAULT_RETRY_POLICY.every,
   );
   const resolutionWindow = input.resolution_window_minutes ?? requiredWindow;
   if (
