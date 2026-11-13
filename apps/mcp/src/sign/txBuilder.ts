@@ -39,6 +39,19 @@ export type BuildInput = {
   creator?: string;
 };
 
+export function effectiveAttempts(
+  specAttempts?: number | null,
+  courtAttempts?: number | null,
+): number {
+  for (const value of [specAttempts, courtAttempts]) {
+    if (value != null && (!Number.isSafeInteger(value) || value < 1))
+      throw new Error("retry max_attempts must be a positive integer");
+  }
+  if (specAttempts != null && courtAttempts != null)
+    return Math.min(specAttempts, courtAttempts);
+  return specAttempts ?? courtAttempts ?? DEFAULT_RETRY_POLICY.max_attempts;
+}
+
 export function requiredResolutionWindowMinutes(
   observationAt: string,
   expirationEstimateAt: string,
@@ -133,10 +146,7 @@ export function buildCreateMarketTxs(input: BuildInput): WalletTransaction[] {
   const requiredWindow = requiredResolutionWindowMinutes(
     observationAt,
     expirationEstimateAt,
-    Math.max(
-      Number(spec.retry?.max_attempts ?? 0),
-      input.court_max_attempts ?? 0,
-    ) || DEFAULT_RETRY_POLICY.max_attempts,
+    effectiveAttempts(spec.retry?.max_attempts, input.court_max_attempts),
     spec.retry?.every ?? DEFAULT_RETRY_POLICY.every,
   );
   const resolutionWindow = input.resolution_window_minutes ?? requiredWindow;

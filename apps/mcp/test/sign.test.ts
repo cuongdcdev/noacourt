@@ -7,6 +7,7 @@ import { loadConfig } from "../src/config.js";
 import {
   buildCreateMarketTxs,
   decimalToUnits,
+  effectiveAttempts,
   parseCreateMarketResult,
   requiredResolutionWindowMinutes,
 } from "../src/lib.js";
@@ -36,6 +37,24 @@ const basic = {
 const fixtureDir = () => mkdtempSync(join(tmpdir(), "noacourt-sign-"));
 
 describe("transaction builder", () => {
+  it("caps spec retry attempts at Court max_attempts", () => {
+    expect(effectiveAttempts(5, 3)).toBe(3);
+    expect(effectiveAttempts(2, 4)).toBe(2);
+    expect(effectiveAttempts(undefined, 4)).toBe(4);
+    expect(effectiveAttempts(6, undefined)).toBe(6);
+    expect(effectiveAttempts()).toBe(5);
+    const txs = buildCreateMarketTxs({
+      ...basic,
+      spec_json: JSON.stringify({
+        observation: { at: basic.expiration_estimate_at },
+        retry: { max_attempts: 5, every: "3m" },
+      }),
+      court_max_attempts: 3,
+    });
+    expect(txs.at(-1)?.actions[0].params.args.resolution_window_minutes).toBe(
+      16,
+    );
+  });
   it("rebuilds signing duration with a margin and refuses late signing", () => {
     const observation = "2026-11-13T08:40:00Z";
     const early = calculateSignTiming({
@@ -429,8 +448,10 @@ describe("sign request HTTP", () => {
     const link = JSON.parse(data.result.content[0].text);
     expect(link.url).toContain("/sign/");
     expect(link.qr_png_data_url).toMatch(/^data:image\/png;base64,/);
-    expect(link.summary.resolution_window_minutes).toBeGreaterThanOrEqual(25);
-    expect(link.warnings).toEqual([]);
+    expect(link.summary.resolution_window_minutes).toBeGreaterThanOrEqual(22);
+    expect(link.warnings.join(" ")).toContain(
+      "choose a later observation time",
+    );
     const request = store.get(link.url.split("/").at(-1)!)!;
     expect(link.spec_hash).toBe(rendered.spec_hash);
     expect(request.spec_json).toBe(rendered.spec_json);
@@ -502,8 +523,8 @@ describe("sign request HTTP", () => {
     const data = (await response.json()) as any;
     expect(data.result.isError).not.toBe(true);
     const link = JSON.parse(data.result.content[0].text);
-    expect(link.summary.resolution_window_minutes).toBeGreaterThanOrEqual(25);
-    expect(link.warnings).toHaveLength(1);
+    expect(link.summary.resolution_window_minutes).toBeGreaterThanOrEqual(22);
+    expect(link.warnings).toHaveLength(2);
     expect(link.warnings[0]).toContain(
       `raised to ${link.summary.resolution_window_minutes} minutes`,
     );

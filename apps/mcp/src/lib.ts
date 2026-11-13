@@ -1,6 +1,7 @@
 export {
   buildCreateMarketTxs,
   decimalToUnits,
+  effectiveAttempts,
   parseCreateMarketResult,
   requiredResolutionWindowMinutes,
 } from "./sign/txBuilder.js";

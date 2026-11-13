@@ -1,4 +1,5 @@
 import express, { type Request } from "express";
+import { lookup } from "node:dns/promises";
 import { mkdirSync, realpathSync } from "node:fs";
 import { readFile, realpath, stat } from "node:fs/promises";
 import { resolve, sep } from "node:path";
@@ -31,7 +32,13 @@ import { signPage } from "./sign/page/html.js";
 import { KeeperSigner } from "./near/signer.js";
 import { KeeperLoop } from "./keeper/loop.js";
 import { ActionHistory } from "./keeper/history.js";
-import { lifecycle, outlayerDetails, withIso } from "./status.js";
+import {
+  annotateReceiptSources,
+  lifecycle,
+  marketTopLevelStatus,
+  outlayerDetails,
+  withIso,
+} from "./status.js";
 
 const specSchema = z
   .union([z.string(), z.record(z.unknown())])
@@ -89,6 +96,7 @@ export type ServerDeps = {
   wasm?: WasmRunner;
   spend?: SpendCounter;
   rawFetch?: typeof fetch;
+  rawResolveHost?: typeof lookup;
   signer?: Pick<KeeperSigner, "send">;
   store?: SignStore;
 };
@@ -397,10 +405,16 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
       jcs(spec),
       spec.decide.kind === "text_judge",
     );
+    const rendered = renderRules(spec);
+    const verdictHash = (verdict as Record<string, unknown> | null)?.spec_hash;
     const hashes = await match();
     const outcome = (verdict as Record<string, any>)?.outcome;
     return {
-      verdict,
+      verdict: annotateReceiptSources(verdict, spec),
+      spec_hash: rendered.spec_hash,
+      ...(typeof verdictHash === "string" && verdictHash !== rendered.spec_hash
+        ? { verdict_spec_hash: verdictHash }
+        : {}),
       ...hashes,
       preview_using_latest_data: Date.now() < Date.parse(spec.observation.at),
       note:
@@ -527,7 +541,7 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
     );
     register(
       "source_sample",
-      "Fetch one source now through resolver simulation; for http_json/GitHub also show a safe raw JSON excerpt, identity asserts, and numeric JSONPaths. Uses the simulate rate limit.",
+      "Fetch one source now through resolver simulation; show a safe raw JSON excerpt for http_json, GitHub, and candle tools. Uses the simulate rate limit.",
       {
         source: z
           .record(z.unknown())
@@ -547,7 +561,7 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
             );
           // Reject unsafe direct targets before any resolver network access.
           const raw = ["http_json", "github_repo"].includes(String(source.tool))
-            ? await rawSample(source, deps.rawFetch)
+            ? await rawSample(source, deps.rawFetch, deps.rawResolveHost)
             : null;
           const sampled = structuredClone(source) as Record<string, any>;
           sampled.id ||= "sample";
@@ -633,10 +647,23 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
             );
           const result = await simulate(spec, ip, true);
           const verdict = result.verdict as Record<string, any>;
+          const candleRaw = [
+            "binance_kline",
+            "okx_candle",
+            "coinbase_candle",
+          ].includes(String(sampled.tool))
+            ? await rawSample(
+                { ...sampled, adapter_url: verdict?.sources?.[0]?.url },
+                deps.rawFetch,
+                deps.rawResolveHost,
+              ).catch((error) => ({
+                error: error instanceof Error ? error.message : String(error),
+              }))
+            : null;
           return {
             source: verdict?.sources?.[0] || null,
             fallback: verdict?.sources?.[1] || null,
-            raw,
+            raw: candleRaw ?? raw,
             wasm_sha256: result.wasm_sha256,
             matches_court_resolver: result.matches_court_resolver,
             court_resolver_note: result.court_resolver_note,
@@ -733,16 +760,9 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
           const rendered = renderRules(originalSpec);
           const spec = parseSpec(rendered.spec_json);
           const configuredAttempts =
-            originalSpec.retry?.max_attempts == null &&
             typeof court.maxAttempts === "function"
               ? await court.maxAttempts().catch(() => null)
               : null;
-          const maxAttempts = Math.max(
-            Number(
-              spec.retry?.max_attempts ?? DEFAULT_RETRY_POLICY.max_attempts,
-            ),
-            configuredAttempts ?? 0,
-          );
           const checked = await lint(spec);
           if (!checked.ok)
             throw new Error(
@@ -820,7 +840,7 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
               duration_minutes: args.duration_minutes,
               duration_days: args.duration_days,
               resolution_window_minutes: args.resolution_window_minutes,
-              court_max_attempts: maxAttempts,
+              court_max_attempts: configuredAttempts ?? undefined,
               creator: args.creator,
             },
             requestedAtMs,
@@ -838,8 +858,16 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
     register(
       "market_status",
       "Read Noa market, pending resolution, Court state and verdict; includes testnet explorer links.",
-      { market_id: z.number().int().nonnegative() },
-      async ({ market_id }) =>
+      {
+        market_id: z.number().int().nonnegative(),
+        account_id: z
+          .string()
+          .optional()
+          .describe(
+            "Optional NEAR account ID for per-outcome shares and claim eligibility.",
+          ),
+      },
+      async ({ market_id, account_id }) =>
         guard(async () => {
           const market = await rpc.view<unknown>(
             config.noaContract,
@@ -873,15 +901,72 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
           const specEntry = courtItem?.spec_hash
             ? await court.spec(String(courtItem.spec_hash))
             : null;
+          let accountPosition: Record<string, unknown> | null = null;
+          if (account_id !== undefined) {
+            if (!/^[a-z0-9._-]{2,64}$/.test(account_id))
+              throw new Error("invalid NEAR account ID");
+            const [positions, costBasis] = await Promise.all([
+              rpc.view<Record<string, any>[]>(
+                config.noaContract,
+                "get_user_positions_in_market",
+                { account_id, market_id },
+              ),
+              rpc.view<string | null>(
+                config.noaContract,
+                "get_user_cost_basis",
+                { account_id, market_id },
+              ),
+            ]);
+            const noaMarket = market as Record<string, any>;
+            const outcomes = Array.isArray(noaMarket.outcomes)
+              ? noaMarket.outcomes
+              : [];
+            const shares = outcomes.map(
+              (outcome: Record<string, any>, index: number) => {
+                const outcomeId = Number(outcome.id ?? index);
+                const position = positions.find(
+                  (entry) => Number(entry.outcome_id) === outcomeId,
+                );
+                return {
+                  outcome_id: outcomeId,
+                  name: outcome.name ?? String(outcomeId),
+                  shares_fp: String(position?.shares_fp ?? "0"),
+                };
+              },
+            );
+            const state = String(noaMarket.status ?? "").toLowerCase();
+            const hasEntry = positions.length > 0 || costBasis != null;
+            accountPosition = {
+              account_id,
+              shares_by_outcome: shares,
+              cost_basis: costBasis,
+              claim_status:
+                state === "resolved" || state === "void"
+                  ? hasEntry
+                    ? "claimable"
+                    : "claimed_or_never_held"
+                  : state === "active"
+                    ? "not_claimable_yet"
+                    : "not_claimable",
+              claimable_amount: null,
+              note: "Noa has no cheap claimable payout or claimed flag view; no remaining position or cost basis can also mean never held.",
+            };
+          }
           const rejection = history.linkRejection(market_id);
           return {
-            status: verdict ? "resolved" : "pending",
+            status: marketTopLevelStatus(
+              market,
+              court_market,
+              pending_resolution,
+              verdict,
+            ),
             now_utc: new Date().toISOString(),
             market: withIso(market),
             pending_resolution: withIso(pending_resolution),
             court_market: withIso(court_market),
-            verdict: withIso(verdict),
+            verdict: withIso(annotateReceiptSources(verdict, specEntry)),
             spec: withIso(specEntry),
+            account_position: accountPosition,
             link_rejection: rejection,
             actions: history.forItem(`noa:${market_id}`),
             ...(await outlayerInfo(`noa:${market_id}`, verdict)),
@@ -973,9 +1058,14 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
           });
           return {
             request_id: id,
-            status: verdict ? "resolved" : "pending",
+            status:
+              market_id === undefined
+                ? verdict
+                  ? "resolved"
+                  : "pending"
+                : marketTopLevelStatus(noa, courtItem, pending, verdict),
             now_utc: new Date().toISOString(),
-            verdict: withIso(verdict),
+            verdict: withIso(annotateReceiptSources(verdict, specEntry)),
             court_request: request_id ? withIso(courtItem) : null,
             court_market: market_id === undefined ? null : withIso(courtItem),
             spec: withIso(specEntry),

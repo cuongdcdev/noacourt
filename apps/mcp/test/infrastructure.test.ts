@@ -6,7 +6,7 @@ import { loadConfig } from "../src/config.js";
 import { WasmRunner } from "../src/resolver/wasm.js";
 import { RateLimiter, SpendCounter } from "../src/ratelimit.js";
 import { NearRpc } from "../src/near/rpc.js";
-import { safeUrl, suggestPaths } from "../src/source.js";
+import { rawSample, safeUrl, sampleUrl, suggestPaths } from "../src/source.js";
 
 const temp = () => mkdtempSync(join(tmpdir(), "noacourt-test-"));
 const config = () => ({
@@ -17,6 +17,57 @@ const config = () => ({
 });
 
 describe("infrastructure", () => {
+  it.each([
+    [
+      { tool: "binance_kline", params: { symbol: "NEARUSDT", interval: "1m" } },
+      "data-api.binance.vision/api/v3/klines?symbol=NEARUSDT&interval=1m&limit=3",
+    ],
+    [
+      { tool: "okx_candle", params: { instId: "NEAR-USDT", bar: "1m" } },
+      "www.okx.com/api/v5/market/candles?instId=NEAR-USDT&bar=1m&limit=100",
+    ],
+    [
+      {
+        tool: "coinbase_candle",
+        params: { product_id: "NEAR-USD", granularity: 60 },
+      },
+      "api.exchange.coinbase.com/products/NEAR-USD/candles?granularity=60",
+    ],
+  ] as const)(
+    "fetches a bounded raw candle excerpt for %o",
+    async (source, expected) => {
+      expect(sampleUrl(source)).toContain(expected);
+      const request = vi.fn(
+        async () =>
+          new Response(JSON.stringify([["x".repeat(5000)]]), { status: 200 }),
+      );
+      const resolveHost = vi.fn(async () => [
+        { address: "93.184.216.34", family: 4 },
+      ]);
+      const result = await rawSample(
+        source,
+        request as typeof fetch,
+        resolveHost as any,
+      );
+      expect(result?.excerpt.length).toBe(2048);
+      expect(request).toHaveBeenCalledWith(
+        expect.any(URL),
+        expect.objectContaining({ method: "GET" }),
+      );
+    },
+  );
+  it("uses the Binance adapter's fallback endpoint when the resolver reports it", () => {
+    expect(
+      sampleUrl({
+        tool: "binance_kline",
+        params: { symbol: "NEARUSDT", interval: "1m" },
+        adapter_url:
+          "https://api.binance.com/api/v3/klines?symbol=NEARUSDT&interval=1m&limit=3",
+      }),
+    ).toBe(
+      "https://api.binance.com/api/v3/klines?symbol=NEARUSDT&interval=1m&limit=3",
+    );
+  });
   it("uses the three default RPC endpoints and a 70-second trigger grace", () => {
     vi.stubEnv("NEAR_RPC_URLS", "");
     vi.stubEnv("TRIGGER_GRACE_SECONDS", "");

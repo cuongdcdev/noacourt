@@ -55,10 +55,53 @@ export async function safeUrl(
 }
 
 export function sampleUrl(source: Record<string, any>): string | null {
+  const adapterUrl = (hosts: string[], path: string): string | null => {
+    try {
+      const url = new URL(String(source.adapter_url ?? ""));
+      return url.protocol === "https:" &&
+        hosts.includes(url.hostname) &&
+        url.pathname === path
+        ? url.href
+        : null;
+    } catch {
+      return null;
+    }
+  };
   if (source.tool === "http_json")
     return source.request?.url || source.params?.request?.url || null;
   if (source.tool === "github_repo")
     return `https://api.github.com/repos/${encodeURIComponent(source.params?.owner || "")}/${encodeURIComponent(source.params?.repo || "")}`;
+  if (source.tool === "binance_kline") {
+    const actual = adapterUrl(
+      ["data-api.binance.vision", "api.binance.com"],
+      "/api/v3/klines",
+    );
+    if (actual) return actual;
+    const symbol = encodeURIComponent(String(source.params?.symbol ?? ""));
+    const interval = encodeURIComponent(
+      String(source.params?.interval ?? "1m"),
+    );
+    return `https://data-api.binance.vision/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=3`;
+  }
+  if (source.tool === "okx_candle") {
+    const actual = adapterUrl(["www.okx.com"], "/api/v5/market/candles");
+    if (actual) return actual;
+    const instId = encodeURIComponent(String(source.params?.instId ?? ""));
+    const bar = encodeURIComponent(String(source.params?.bar ?? "1m"));
+    return `https://www.okx.com/api/v5/market/candles?instId=${instId}&bar=${bar}&limit=100`;
+  }
+  if (source.tool === "coinbase_candle") {
+    const product = encodeURIComponent(String(source.params?.product_id ?? ""));
+    const actual = adapterUrl(
+      ["api.exchange.coinbase.com"],
+      `/products/${product}/candles`,
+    );
+    if (actual) return actual;
+    const granularity = encodeURIComponent(
+      String(source.params?.granularity ?? 60),
+    );
+    return `https://api.exchange.coinbase.com/products/${product}/candles?granularity=${granularity}`;
+  }
   return null;
 }
 
@@ -107,9 +150,12 @@ export async function rawSample(
   }
   const data = JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
   const suggestions = suggestPaths(data);
+  const candle = ["binance_kline", "okx_candle", "coinbase_candle"].includes(
+    String(source.tool),
+  );
   return {
     url: url.href,
-    excerpt: JSON.stringify(data, null, 2).slice(0, 4096),
+    excerpt: JSON.stringify(data, null, 2).slice(0, candle ? 2048 : 4096),
     suggested_repo_id:
       source.tool === "github_repo" &&
       typeof (data as Record<string, unknown>)?.id === "number"

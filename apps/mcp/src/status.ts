@@ -6,7 +6,10 @@ import {
 
 export function nsIso(value: unknown): string | null {
   try {
-    const milliseconds = Number(BigInt(String(value)) / 1_000_000n);
+    if (value == null) return null;
+    const nanoseconds = BigInt(String(value));
+    if (nanoseconds <= 0n) return null;
+    const milliseconds = Number(nanoseconds / 1_000_000n);
     const date = new Date(milliseconds);
     return Number.isFinite(date.getTime()) ? date.toISOString() : null;
   } catch {
@@ -21,15 +24,75 @@ export function withIso(value: unknown): unknown {
   for (const [key, entry] of Object.entries(value)) {
     output[key] = withIso(entry);
     if (
-      entry != null &&
-      (key.endsWith("_ns") ||
-        ["expiration_time", "resolution_deadline", "dispute_deadline"].includes(
-          key,
-        ))
+      key.endsWith("_ns") ||
+      ["expiration_time", "resolution_deadline", "dispute_deadline"].includes(
+        key,
+      )
     )
       output[`${key}_iso`] = nsIso(entry);
   }
   return output;
+}
+
+export function marketTopLevelStatus(
+  noa: unknown,
+  court: unknown,
+  pending: unknown,
+  verdict: unknown,
+): string {
+  const noaStatus = String(
+    (noa as Record<string, unknown> | null)?.status ?? "",
+  ).toLowerCase();
+  const courtStatus = normalizeCourtItem(court)?.state.toLowerCase();
+  if (noaStatus === "resolved") return "finalized";
+  if (noaStatus === "active" && pending != null && courtStatus === "resolved")
+    return "proposed_in_dispute_window";
+  return verdict ? "resolved" : "pending";
+}
+
+export function annotateReceiptSources(
+  verdict: unknown,
+  specInput: unknown,
+): unknown {
+  if (!verdict || typeof verdict !== "object") return verdict;
+  const result = verdict as Record<string, any>;
+  if (result.verdict && typeof result.verdict === "object")
+    return {
+      ...result,
+      verdict: annotateReceiptSources(result.verdict, specInput),
+    };
+  if (!Array.isArray(result.sources)) return verdict;
+  let spec = specInput as Record<string, any> | null;
+  try {
+    if (typeof spec === "string") spec = JSON.parse(spec);
+    else if (typeof spec?.spec_json === "string")
+      spec = JSON.parse(spec.spec_json);
+  } catch {
+    spec = null;
+  }
+  const sourceIds = Array.isArray(spec?.sources)
+    ? spec.sources.map((source: Record<string, any>) => String(source.id))
+    : result.sources.map((source: Record<string, any>) => String(source.id));
+  const good = (source: Record<string, any>) =>
+    source.ok === true ||
+    (source.ok !== false && source.value != null && source.error == null);
+  const firstGood = sourceIds.find((id: string) =>
+    result.sources.some(
+      (source: Record<string, any>) => String(source.id) === id && good(source),
+    ),
+  );
+  const method = String(spec?.aggregate?.method ?? "primary_then_fallback");
+  return {
+    ...result,
+    sources: result.sources.map((source: Record<string, any>) => ({
+      ...source,
+      used_for_decision:
+        good(source) &&
+        (method === "primary_then_fallback"
+          ? String(source.id) === firstGood
+          : method === "median" || method === "all_agree"),
+    })),
+  };
 }
 
 export function lifecycle(input: {

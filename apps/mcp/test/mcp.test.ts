@@ -7,6 +7,7 @@ import { loadConfig } from "../src/config.js";
 import { createApp } from "../src/server.js";
 import { WasmRunner } from "../src/resolver/wasm.js";
 import { examples } from "../src/guide.js";
+import { renderRules } from "../src/spec/render.js";
 import type { NearRpc } from "../src/near/rpc.js";
 import type { CourtClient } from "../src/court/client.js";
 
@@ -36,8 +37,19 @@ const rpc = {
   view: vi.fn(
     async (_account: string, method: string, args?: { market_id?: number }) =>
       method === "get_market" && args?.market_id === 7
-        ? { id: 7, status: "Active" }
-        : null,
+        ? {
+            id: 7,
+            status: "Active",
+            outcomes: [
+              { id: 0, name: "Yes" },
+              { id: 1, name: "No" },
+            ],
+          }
+        : method === "get_user_positions_in_market"
+          ? [{ outcome_id: 0, shares_fp: "123" }]
+          : method === "get_user_cost_basis"
+            ? "100"
+            : null,
   ),
   txStatus: vi.fn(async () => ({
     receipts_outcome: [
@@ -64,6 +76,7 @@ const wasm = new WasmRunner(config, async (_input, mode) =>
         v: 1,
         mode: "simulate",
         status: "resolved",
+        spec_hash: `sha256:${"d".repeat(64)}`,
         outcome: "Yes",
         sources: [
           {
@@ -107,7 +120,22 @@ async function tool(name: string, args: unknown) {
 }
 
 beforeAll(async () => {
-  const created = createApp(config, { rpc, court, wasm });
+  const rawFetch = vi.fn(
+    async () =>
+      new Response(JSON.stringify([[1, "2", "3", "1", "4", "5", 2]]), {
+        status: 200,
+      }),
+  );
+  const rawResolveHost = vi.fn(async () => [
+    { address: "93.184.216.34", family: 4 },
+  ]);
+  const created = createApp(config, {
+    rpc,
+    court,
+    wasm,
+    rawFetch: rawFetch as typeof fetch,
+    rawResolveHost: rawResolveHost as any,
+  });
   close = created.close;
   server = await new Promise((resolve) => {
     const s = created.app.listen(0, "127.0.0.1", () => resolve(s));
@@ -278,6 +306,12 @@ describe("MCP HTTP", () => {
         source: examples.A1.sources[0],
       });
       expect(sampled.isError).not.toBe(true);
+      const sampledValue = JSON.parse(sampled.content[0].text);
+      expect(sampledValue.raw.url).toContain(
+        "data-api.binance.vision/api/v3/klines",
+      );
+      expect(sampledValue.raw.excerpt).toContain('"2"');
+      expect(sampledValue.raw.excerpt.length).toBeLessThanOrEqual(2048);
       const simulated = runner.mock.calls.find(([mode]) => mode === "simulate");
       expect(simulated).toBeDefined();
       expect(JSON.parse(simulated![1])).toMatchObject({
@@ -291,6 +325,8 @@ describe("MCP HTTP", () => {
     const result = await tool("spec_simulate", { spec: examples.A1 });
     expect(result.isError).not.toBe(true);
     expect(JSON.parse(result.content[0].text)).toMatchObject({
+      spec_hash: renderRules(examples.A1).spec_hash,
+      verdict_spec_hash: `sha256:${"d".repeat(64)}`,
       preview_using_latest_data: true,
       note: expect.stringContaining(
         "observation time not reached; result uses the latest available data",
@@ -317,6 +353,96 @@ describe("MCP HTTP", () => {
     expect(pending).toMatchObject({ status: "pending", request_id: "noa:7" });
     expect(pending.next_step).toBeTypeOf("string");
     missingVerdict.mockRestore();
+  });
+  it("omits the separately labelled verdict hash when it matches canonical rules", async () => {
+    const canonical = renderRules(examples.A1).spec_hash;
+    const runner = vi.spyOn(wasm, "run").mockResolvedValueOnce({
+      outcome: "Yes",
+      spec_hash: canonical,
+      sources: [],
+    });
+    try {
+      const result = JSON.parse(
+        (await tool("spec_simulate", { spec: examples.A1 })).content[0].text,
+      );
+      expect(result.spec_hash).toBe(canonical);
+      expect(result).not.toHaveProperty("verdict_spec_hash");
+    } finally {
+      runner.mockRestore();
+    }
+  });
+  it("shows account shares and distinguishes dispute proposals from finalization", async () => {
+    const active = JSON.parse(
+      (
+        await tool("market_status", {
+          market_id: 7,
+          account_id: "alice.testnet",
+        })
+      ).content[0].text,
+    );
+    expect(active.account_position).toMatchObject({
+      claim_status: "not_claimable_yet",
+      shares_by_outcome: [
+        { outcome_id: 0, shares_fp: "123" },
+        { outcome_id: 1, shares_fp: "0" },
+      ],
+      claimable_amount: null,
+      note: expect.stringContaining("no cheap claimable payout"),
+    });
+    const courtMarket = vi
+      .spyOn(court, "market")
+      .mockResolvedValue({ status: "Resolved" });
+    const noaView = vi
+      .spyOn(rpc, "view")
+      .mockImplementation(async (_account, method, args) => {
+        if (method === "get_market")
+          return {
+            id: 7,
+            status: "Active",
+            outcomes: [{ id: 0, name: "Yes" }],
+          };
+        if (method === "get_pending_resolution")
+          return { dispute_deadline: "1794559200000000000" };
+        return null;
+      });
+    try {
+      const proposed = JSON.parse(
+        (await tool("market_status", { market_id: 7 })).content[0].text,
+      );
+      expect(proposed.status).toBe("proposed_in_dispute_window");
+      expect(proposed.lifecycle).toBe("dispute_window");
+      const receipt = JSON.parse(
+        (await tool("verdict_get", { market_id: 7 })).content[0].text,
+      );
+      expect(receipt.status).toBe("proposed_in_dispute_window");
+      noaView.mockImplementation(async (_account, method) =>
+        method === "get_market"
+          ? { id: 7, status: "Resolved", outcomes: [{ id: 0, name: "Yes" }] }
+          : method === "get_user_positions_in_market"
+            ? [{ outcome_id: 0, shares_fp: "123" }]
+            : method === "get_user_cost_basis"
+              ? "100"
+              : null,
+      );
+      const finalized = JSON.parse(
+        (
+          await tool("market_status", {
+            market_id: 7,
+            account_id: "alice.testnet",
+          })
+        ).content[0].text,
+      );
+      expect(finalized.status).toBe("finalized");
+      expect(finalized.account_position.claim_status).toBe("claimable");
+      expect(
+        JSON.parse(
+          (await tool("verdict_get", { market_id: 7 })).content[0].text,
+        ).status,
+      ).toBe("finalized");
+    } finally {
+      courtMarket.mockRestore();
+      noaView.mockRestore();
+    }
   });
   it("returns not_found for unknown Noa markets and Court requests", async () => {
     const market = await tool("market_status", { market_id: 999 });

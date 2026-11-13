@@ -6,6 +6,7 @@ import type { KeeperSigner } from "../near/signer.js";
 import { renderRules } from "../spec/render.js";
 import {
   buildCreateMarketTxs,
+  effectiveAttempts,
   parseCreateMarketResult,
   type BuildInput,
 } from "./txBuilder.js";
@@ -56,10 +57,7 @@ export async function createSignRequest(
   const requiredWindow = requiredResolutionWindowMinutes(
     observationAt,
     timing.expiration_estimate_at,
-    Math.max(
-      Number(spec.retry?.max_attempts ?? 0),
-      input.court_max_attempts ?? 0,
-    ) || DEFAULT_RETRY_POLICY.max_attempts,
+    effectiveAttempts(spec.retry?.max_attempts, input.court_max_attempts),
     spec.retry?.every ?? DEFAULT_RETRY_POLICY.every,
   );
   const resolutionWindow = Math.max(
@@ -77,6 +75,10 @@ export async function createSignRequest(
   if (timing.clipped)
     warnings.push(
       "Requested trading close was after observation.at; clipped to observation time.",
+    );
+  if (Date.parse(timing.sign_before) - nowMs < 10 * 60_000)
+    warnings.push(
+      "Sign-before is less than 10 minutes away; choose a later observation time to allow wallet approval.",
     );
   const params = {
     ...input,
@@ -203,19 +205,6 @@ export async function planForAccount(
     now_ms: Date.now(),
     sign_margin_minutes: deps.config.signMarginMinutes,
   });
-  const requiredWindow = requiredResolutionWindowMinutes(
-    observationAt,
-    timing.expiration_estimate_at,
-    Math.max(
-      Number(spec.retry?.max_attempts ?? 0),
-      request.params.court_max_attempts ?? 0,
-    ) || DEFAULT_RETRY_POLICY.max_attempts,
-    spec.retry?.every ?? DEFAULT_RETRY_POLICY.every,
-  );
-  const resolutionWindow = Math.max(
-    request.params.resolution_window_minutes ?? 0,
-    requiredWindow,
-  );
   const tokenId = request.params.token_id ?? deps.config.marketToken;
   const [feeExempt, balance, courtConfig, noaConfig] = await Promise.all([
     deps.rpc.view<boolean>(deps.config.noaContract, "is_fee_exempt", {
@@ -232,6 +221,21 @@ export async function planForAccount(
       {},
     ),
   ]);
+  const configuredAttempts = Number(courtConfig.max_attempts);
+  const courtAttempts =
+    Number.isSafeInteger(configuredAttempts) && configuredAttempts > 0
+      ? configuredAttempts
+      : request.params.court_max_attempts;
+  const requiredWindow = requiredResolutionWindowMinutes(
+    observationAt,
+    timing.expiration_estimate_at,
+    effectiveAttempts(spec.retry?.max_attempts, courtAttempts),
+    spec.retry?.every ?? DEFAULT_RETRY_POLICY.every,
+  );
+  const resolutionWindow = Math.max(
+    request.params.resolution_window_minutes ?? 0,
+    requiredWindow,
+  );
   const fee = BigInt(String(noaConfig.market_creation_fee ?? DEFAULT_FEE));
   const createDeposit = feeExempt ? 0n : fee + STORAGE_BUFFER;
   const plan = buildCreateMarketTxs({
@@ -241,6 +245,7 @@ export async function planForAccount(
     observation_at: observationAt,
     expiration_estimate_at: timing.expiration_estimate_at,
     resolution_window_minutes: resolutionWindow,
+    court_max_attempts: courtAttempts,
     court_contract: deps.config.courtContract,
     noa_contract: deps.config.noaContract,
     token_id: tokenId,
