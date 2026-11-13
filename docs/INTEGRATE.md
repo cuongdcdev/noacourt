@@ -4,7 +4,7 @@ Noa Court resolves a canonical ResolutionSpec through `ai-resolver.noamarket.tes
 
 ## Generic contract integration
 
-Install `near-cli-rs` 0.30 and Node.js with the `apps/mcp` dependencies (`cd apps/mcp && pnpm install`). Prepare a complete valid ResolutionSpec in a local JSON file, updating its observation time and sources. The following uses the saved [price example](../resolver/examples/a1_near_threshold.spec.json) as a starting point. Its fixed date must be moved into the future before a new request. `spec_json` is one JSON **string**, not a nested object. The `canonicalize` package used here is the same dependency as the MCP server; `rules_render` can also supply canonical `spec_json` and `spec_hash`.
+Clone the [Noa Court repository](https://github.com/cuongdcdev/noa-court) when published, then install `near-cli-rs` 0.30 and Node.js with the `apps/mcp` dependencies (`cd apps/mcp && pnpm install`). Prepare a complete valid ResolutionSpec in a local JSON file, updating its observation time and sources. The following uses the saved [price example](../resolver/examples/a1_near_threshold.spec.json) as a starting point. Its fixed date must be moved into the future before a new request. `spec_json` is one JSON **string**, not a nested object. The `canonicalize` package used here is the same dependency as the MCP server; `rules_render` can also supply canonical `spec_json` and `spec_hash`.
 
 ```sh
 export SIGNER=your-account.testnet
@@ -143,7 +143,7 @@ The MCP `market_create_link` tool prepares a wallet URL at `/sign/<id>` (valid f
 
 The `/sign` transaction builder passes `metadata_hash = "noacourt:sha256:<spec_hash hex>"` to Noa `create_market`: in code this is `"noacourt:" + spec_hash`, because `spec_hash` already begins with `sha256:`. This uses Noa's existing free-form `metadata_hash` field; **Noa contract code is unchanged**. Court checks this value against a stored spec, so `link_market({"market_id":N,"spec_hash":null})` is permissionless. The market creator still needs their own unused registration credit; the link also checks Court as resolver, matching ordered outcomes, market state, and expiration at or before `observation.at`.
 
-For a market created in another UI or by CLI with a different or empty `metadata_hash`, the **market creator** can instead sign `link_market({"market_id":N,"spec_hash":"sha256:<hex>"})` (100 TGas, zero deposit). This is an extra creator signature. It works under the same resolver, outcome, expiration, active-market, and creator-credit checks. A metadata value beginning with `noacourt:` cannot use this bypass; an explicit hash must match it.
+For a market created in another UI or by CLI with a different or empty `metadata_hash`, the **market creator** can instead sign `link_market({"market_id":N,"spec_hash":"sha256:<hex>"})` (100 TGas, zero deposit). This is an extra creator signature. It works under the same resolver, outcome, expiration, active-market, and creator-credit checks. Current testnet Court and MCP defaults are five attempts every three minutes. Court requires the Noa resolution deadline to cover `observation.at + max_attempts × retry.every + 5m` (20 minutes with those defaults); otherwise linking returns `resolution window too short for retries`. The MCP computes the required resolution window automatically. A metadata value beginning with `noacourt:` cannot use this bypass; an explicit hash must match it.
 
 ## MCP for agents
 

@@ -31,6 +31,40 @@ export function shouldSkipFallback(status: string, action: string): boolean {
   );
 }
 
+export function triggerFallbackDue(input: {
+  courtStatus: string;
+  observationAt: string;
+  retryAtNs?: string | number | bigint | null;
+  latestKeeperTriggerAtMs?: number;
+  retryEveryMs?: number;
+  nowMs: number;
+}): boolean {
+  if (!["linked", "retryscheduled"].includes(input.courtStatus)) return false;
+  const observation = Date.parse(input.observationAt);
+  if (!Number.isFinite(observation)) return false;
+  const retryAtMs = Number(BigInt(String(input.retryAtNs ?? "0")) / 1_000_000n);
+  const dueAt = Math.max(
+    observation + 70_000,
+    retryAtMs,
+    input.latestKeeperTriggerAtMs === undefined
+      ? 0
+      : input.latestKeeperTriggerAtMs + (input.retryEveryMs ?? 0),
+  );
+  return input.nowMs > dueAt + 3 * 60_000;
+}
+
+export function retryEveryMs(value: string): number {
+  const match = /^(\d+)(s|m|h|d)$/.exec(value);
+  if (!match) throw new Error(`Invalid retry interval: ${value}`);
+  const unit = { s: 1_000, m: 60_000, h: 3_600_000, d: 86_400_000 }[
+    match[2] as "s" | "m" | "h" | "d"
+  ];
+  const duration = Number(match[1]) * unit;
+  if (!Number.isSafeInteger(duration))
+    throw new Error(`Retry interval is too large: ${value}`);
+  return duration;
+}
+
 export function hasUnresolvableHistory(
   sawUnresolvable: boolean | undefined,
   events: { message: string }[],

@@ -25,6 +25,7 @@ export type RunState = {
   durationMinutes: number;
   effectiveDurationMinutes?: number;
   resolutionWindowMinutes: number;
+  courtMaxAttempts?: number;
   price?: { value: string; venue: string };
   balanceBefore?: string;
   spendReserved?: boolean;
@@ -296,6 +297,32 @@ export async function keeperLinkEvidence(marketId: number): Promise<{
     permanent: Boolean(rejected),
     voidTx,
   };
+}
+
+export async function latestKeeperActionAt(
+  marketId: number,
+  action: string,
+): Promise<number | undefined> {
+  const path = resolve(import.meta.dirname, "../../apps/mcp/data/keeper.log");
+  let data: string;
+  try {
+    data = await readFile(path, "utf8");
+  } catch {
+    return undefined;
+  }
+  let latest: number | undefined;
+  for (const line of data.split("\n")) {
+    if (!line) continue;
+    try {
+      const entry = JSON.parse(line);
+      if (entry.id !== `noa:${marketId}` || entry.action !== action) continue;
+      const at = Date.parse(entry.ts);
+      if (Number.isFinite(at)) latest = Math.max(latest ?? 0, at);
+    } catch {
+      // A partial keeper log line may be in progress.
+    }
+  }
+  return latest;
 }
 
 export async function collectNearBlocks(state: RunState): Promise<void> {

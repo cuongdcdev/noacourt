@@ -37,7 +37,7 @@ export function buildSpec(input: SpecInput): Record<string, any> {
   const { scenario, now } = input;
   const failure = scenario === "A6" || scenario === "A7";
   const duration =
-    input.durationMinutes ?? (failure ? 8 : scenario === "NEGW" ? 5 : 10);
+    input.durationMinutes ?? (failure || scenario === "NEGW" ? 5 : 10);
   const at = observationTime(
     now,
     scenario === "A2" || scenario === "A3" ? duration + 3 : duration,
@@ -170,10 +170,7 @@ export function buildSpec(input: SpecInput): Record<string, any> {
     decide,
     outcome_map: outcomeMap,
     on_unavailable: "void",
-    retry: {
-      max_attempts: 3,
-      every: scenario === "NEGW" ? "5m" : failure ? "2m" : "3m",
-    },
+    retry: { max_attempts: 5, every: "3m" },
   };
 }
 

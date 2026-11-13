@@ -2,6 +2,11 @@
   "name": "@noacourt/e2e",
   "private": true,
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cuongdcdev/noa-court.git",
+    "directory": "e2e"
+  },
   "engines": {
     "node": ">=22"
   },

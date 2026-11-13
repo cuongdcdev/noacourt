@@ -1,4 +1,4 @@
-# Noa Court testnet E2E harness
+# [Noa Court](https://github.com/cuongdcdev/noa-court) testnet E2E harness
 
 Node 22 and pnpm are required. The runner creates real testnet markets only when run without `--dry-run`.
 
@@ -10,6 +10,7 @@ pnpm test
 pnpm e2e wave1 --dry-run
 pnpm e2e A1
 pnpm e2e A2,A3,A4
+pnpm e2e A1 --tag "regression 2026-11-13"
 pnpm e2e wave1
 pnpm e2e resume results/<timestamp>-A1.json
 pnpm e2e rerow results/<timestamp>-A1.json
@@ -17,7 +18,7 @@ pnpm e2e rerow results/<timestamp>-A1.json
 
 Comma-separated targets such as `A2,A3,A4` run concurrently in one process with a five-second stagger.
 
-`A1` is the smoke test. `all` and `wave1` run all first-wave scenarios concurrently with a five-second stagger. The dry run fetches live prices and read-only testnet views, builds exact `register_spec` and `create_market` calls, and lints every canonical spec with the local resolver WASM. It never signs transactions or writes fixture files. The `fixtures` subcommand copies stable templates into the configured fixture directory and writes their URLs to `fixtures/urls.json` and `fixtures/README.md`. Actual A6/A7/A8/A8n/A9 runs create a unique file per run and verify its served bytes over HTTPS. A6 rewrites the JSON identity, A7 deletes its file, A8 adds an in-window launch item, A8n leaves only an old item, and A9 adds an instruction-only item.
+`A1` is the smoke test. `all` and `wave1` run all scenarios concurrently with a five-second stagger. Every scenario spec allows up to five attempts, three minutes apart. The dry run fetches live prices and read-only testnet views, builds exact `register_spec` and `create_market` calls, and lints every canonical spec with the local resolver WASM. It never signs transactions or writes fixture files. The `fixtures` subcommand copies stable templates into the configured fixture directory and writes their URLs to `fixtures/urls.json` and `fixtures/README.md`. Actual A6/A7/A8/A8n/A9 runs create a unique file per run and verify its served bytes over HTTPS. A6 rewrites the JSON identity, A7 deletes its file, A8 adds an in-window launch item, A8n leaves only an old item, and A9 adds an instruction-only item. `--tag` adds text to the result row notes.
 
 | Scenario | What it proves                                                  |
 | -------- | --------------------------------------------------------------- |
@@ -30,6 +31,7 @@ Comma-separated targets such as `A2,A3,A4` run concurrently in one process with 
 | A8       | Three text jurors agree on a dated launch post                  |
 | A8n      | No in-window RSS evidence returns the default No without jurors |
 | A9       | Prompt-injection-only RSS evidence never yields Yes             |
+| NEGW     | Short resolution window is permanently rejected, then voided    |
 
 The harness reads **testnet-only** keys from `~/.near-credentials/testnet/<account>.json` at signing time. Keys are never printed or written into results. Keep `e2e/results/` private: its JSON files include signed transaction hashes, full public verdict records, fixture URLs, and recovery state. If a process stops, resume the saved JSON file; the sender polls an uncertain transaction by its persisted hash instead of signing a replacement. `rerow` refreshes only the existing results-table row from a saved file and sends no transaction. Never run two harness processes at once: signer nonce serialization is process-local.
 

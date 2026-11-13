@@ -13,8 +13,10 @@ import {
   evaluateNegw,
   hasUnresolvableHistory,
   marketTooLate,
+  retryEveryMs,
   shouldSkipFallback,
   specTimingDecision,
+  triggerFallbackDue,
 } from "./decisions.js";
 import {
   COURT,
@@ -53,6 +55,7 @@ import {
   collectNearBlocks,
   inspectTriggerReceipts,
   keeperLinkEvidence,
+  latestKeeperActionAt,
   load,
   note,
   save,
@@ -170,8 +173,7 @@ function prepare(
     specJson: "",
     specHash: "",
     durationMinutes:
-      durationOverride ??
-      (isFailure(scenario) ? 8 : scenario === "NEGW" ? 5 : 10),
+      durationOverride ?? (isFailure(scenario) || scenario === "NEGW" ? 5 : 10),
     resolutionWindowMinutes:
       scenario === "NEGW" ? 10 : isFailure(scenario) ? 20 : 15,
     txs: {},
@@ -262,7 +264,8 @@ async function plan(
 }> {
   const balance = await accountBalance(USER(1));
   const courtConfig = await view<any>(COURT, "get_config", {});
-  const courtMaxAttempts = Number(courtConfig.max_attempts ?? 3);
+  const courtMaxAttempts = Number(courtConfig.max_attempts ?? 5);
+  state.courtMaxAttempts = courtMaxAttempts;
   if (state.scenario !== "NEGW")
     state.resolutionWindowMinutes = resolutionWindowMinutes(
       state.spec as { observation: { at: string } },
@@ -347,7 +350,7 @@ async function reserveOne(state: RunState): Promise<void> {
   ledger.priorUsd = Math.max(ledger.priorUsd ?? 0, prior);
   if (recordedPrior !== ledger.priorUsd)
     await writeFile(path, JSON.stringify(ledger, null, 2) + "\n");
-  const estimate = 0.05 * 3;
+  const estimate = 0.05 * Number(state.spec.retry?.max_attempts ?? 5);
   const total = ledger.priorUsd + ledger.estimatedUsd + estimate;
   if (!Number.isFinite(cap) || cap < 0 || total > cap)
     throw new Error(
@@ -387,7 +390,13 @@ async function settleSpend(state: RunState): Promise<void> {
         state.court?.attempts ?? state.court?.attempt ?? 0,
       );
       const actual =
-        state.scenario === "A8n" ? 0 : Math.min(3, attempts) * 0.05;
+        state.scenario === "A8n"
+          ? 0
+          : Math.min(
+              Number(state.spec.retry?.max_attempts ?? 5),
+              state.courtMaxAttempts ?? 5,
+              attempts,
+            ) * 0.05;
       ledger.estimatedUsd = Math.max(
         0,
         ledger.estimatedUsd - entry.estimateUsd + actual,
@@ -777,6 +786,27 @@ async function fallbackLocked(
     await save(state);
     return false;
   }
+  if (action === "trigger") {
+    const latestKeeperTriggerAtMs = await latestKeeperActionAt(id, "trigger");
+    if (
+      !triggerFallbackDue({
+        courtStatus: status,
+        observationAt: state.spec.observation.at,
+        retryAtNs: freshCourt?.retry_at_ns,
+        latestKeeperTriggerAtMs,
+        retryEveryMs: retryEveryMs(String(state.spec.retry?.every ?? "3m")),
+        nowMs: Date.now(),
+      })
+    ) {
+      const marker = `skip:trigger:not_due:${freshCourt?.attempts ?? 0}`;
+      if (!state.fallbacks.includes(marker)) {
+        note(state, "FALLBACK trigger skipped: fresh Court retry is not due");
+        state.fallbacks.push(marker);
+      }
+      await save(state);
+      return false;
+    }
+  }
   const label = `fallback_${action}_${state.fallbacks.length}`;
   note(state, `FALLBACK ${action}: keeper action is over three minutes late`);
   const call =
@@ -994,10 +1024,6 @@ async function waitTerminal(state: RunState): Promise<void> {
     const noaDeadline = Number(
       BigInt(String(state.noa?.resolution_deadline ?? "0")) / 1_000_000n,
     );
-    const retryAt = Number(
-      BigInt(String(state.court?.retry_at_ns ?? state.court?.retry_at ?? "0")) /
-        1_000_000n,
-    );
     if (
       c === "resolved" &&
       state.court?.forwarded === false &&
@@ -1013,8 +1039,17 @@ async function waitTerminal(state: RunState): Promise<void> {
     ) {
       await fallback(state, "void");
     } else if (
-      ["linked", "retryscheduled"].includes(c) &&
-      now > Math.max(at, retryAt) + 3 * 60_000 &&
+      triggerFallbackDue({
+        courtStatus: c,
+        observationAt: state.spec.observation.at,
+        retryAtNs: state.court?.retry_at_ns,
+        latestKeeperTriggerAtMs: await latestKeeperActionAt(
+          state.marketId!,
+          "trigger",
+        ),
+        retryEveryMs: retryEveryMs(String(state.spec.retry?.every ?? "3m")),
+        nowMs: now,
+      }) &&
       now < noaDeadline &&
       !state.fallbacks.includes(`trigger:${state.court?.attempts ?? 0}`)
     ) {
@@ -1141,7 +1176,10 @@ async function independent(state: RunState, persist = true): Promise<void> {
         state.events,
         state.notes,
       ),
-      retryMaxAttempts: Number(state.spec.retry?.max_attempts),
+      retryMaxAttempts: Math.min(
+        Number(state.spec.retry?.max_attempts ?? 5),
+        state.courtMaxAttempts ?? Number(state.spec.retry?.max_attempts ?? 5),
+      ),
     });
     state.notes = [
       ...(state.notes ?? []).filter(

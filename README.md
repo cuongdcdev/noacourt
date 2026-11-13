@@ -60,11 +60,11 @@ The verifiable fetch, extract, and decide path runs in an OutLayer TEE for norma
 
 ## Noa link and trust status
 
-The `/sign` page supplies Noa's existing free-form `metadata_hash` as `"noacourt:sha256:<spec_hash hex>"` (`"noacourt:" + spec_hash`, where `spec_hash` already contains `sha256:`). Noa contract code is unchanged. This binds the market to a stored spec, allowing anyone to call Court `link_market`. The market creator must first pay for their own registration credit; another account's credit cannot be used. A market made elsewhere with a different or empty metadata hash can still link when its creator signs `link_market({"market_id":N,"spec_hash":"sha256:<hex>"})`, subject to the same resolver, outcome, expiration, and credit checks. See [metadata_hash behaviour](docs/INTEGRATE.md#metadata_hash-behaviour).
+The `/sign` page supplies Noa's existing free-form `metadata_hash` as `"noacourt:sha256:<spec_hash hex>"` (`"noacourt:" + spec_hash`, where `spec_hash` already contains `sha256:`). Noa contract code is unchanged. This binds the market to a stored spec, allowing anyone to call Court `link_market`. The market creator must first pay for their own registration credit; another account's credit cannot be used. A market made elsewhere with a different or empty metadata hash can still link when its creator signs `link_market({"market_id":N,"spec_hash":"sha256:<hex>"})`, subject to the same resolver, outcome, expiration, and credit checks. Current testnet and MCP retry defaults are five attempts every three minutes; the Noa resolution window must extend through `observation.at + max_attempts × retry.every + 5m` (20 minutes with those defaults). MCP computes the required window. See [metadata_hash behaviour](docs/INTEGRATE.md#metadata_hash-behaviour).
 
 The deployment is **testnet only**: Court `ai-resolver.noamarket.testnet`, Noa `v3.noamarket.testnet`, NPOINT `point.noamarket.testnet` (18 decimals), and OutLayer project `court-ops.noamarket.testnet/court-resolver` on `outlayer.testnet`. The current Court configuration gives OutLayer 200 TGas and a 150-second execution limit; `trigger` and `trigger_request` need at least 265 TGas prepaid, so callers should use 300 TGas ([formula and commands](docs/INTEGRATE.md#generic-contract-integration)). A testnet-only `trusted_keeper` fallback can submit a verdict when OutLayer is unavailable; Court marks that receipt `tee: false`. It must be disabled (`null`) on mainnet. Consumers requiring TEE execution should check `tee == true`. The current receipt, not the diagram, is the evidence for any individual market.
 
-Noa's market core contract is **closed source** and predates this hackathon. Only Noa Court in this repository—court-core, resolver, Court contract, and MCP server—is open source. The sibling hackathon project is [Fulfil](https://github.com/cuongdcdev/fullfil) ([site](https://fulfil.junstudio.xyz)). The [Noa Court repository](https://github.com/cuongdcdev/noacourt) contains this documentation and code.
+Noa's market core contract is **closed source** and predates this hackathon. Only Noa Court in this repository—court-core, resolver, Court contract, and MCP server—is open source. The sibling hackathon project is [Fulfil](https://github.com/cuongdcdev/fullfil) ([site](https://fulfil.junstudio.xyz)). The [Noa Court repository](https://github.com/cuongdcdev/noa-court) contains this documentation and code.
 
 ## Repository layout
 
@@ -77,9 +77,17 @@ Noa's market core contract is **closed source** and predates this hackathon. Onl
 | `docs/SPEC.md`         | ResolutionSpec v1 and Verdict v1 reference.                                          |
 | `docs/INTEGRATE.md`    | Generic and Noa integration guide.                                                   |
 | `docs/ARCHITECTURE.md` | Component interfaces and architecture.                                               |
-| `E2E_RESULTS.md`       | Testnet E2E evidence when the harness run is recorded.                               |
+| `E2E_RESULTS.md`       | Recorded testnet E2E evidence.                                                       |
 
-## Build and test
+## Get the code
+
+The public repository is planned at this URL and has not been created yet. Once available, clone it with:
+
+```sh
+git clone https://github.com/cuongdcdev/noa-court.git && cd noa-court
+```
+
+Run each command block from the repository root in a fresh shell.
 
 From the repository root, run the resolver build and saved lint example:
 
@@ -96,14 +104,20 @@ cargo test --lib
 cargo near build non-reproducible-wasm
 ```
 
-Run MCP checks from its standalone Node 22/pnpm package:
+Start the MCP server from its standalone Node 22/pnpm package, or run its checks:
 
 ```sh
-cd apps/mcp
-pnpm install
-pnpm typecheck
-pnpm test
-pnpm build
+cd apps/mcp && pnpm install && pnpm build && pnpm start
+```
+
+```sh
+cd apps/mcp && pnpm typecheck && pnpm test
+```
+
+Run the E2E harness dry run from its package:
+
+```sh
+cd e2e && pnpm install && pnpm e2e A1 --dry-run
 ```
 
 See the [Court](contracts/court/README.md), [resolver](resolver/README.md), and [MCP](apps/mcp/README.md) READMEs for local runtime details.

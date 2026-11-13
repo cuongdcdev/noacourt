@@ -11,8 +11,10 @@ import {
   evaluateNegw,
   hasUnresolvableHistory,
   marketTooLate,
+  retryEveryMs,
   shouldSkipFallback,
   specTimingDecision,
+  triggerFallbackDue,
 } from "../src/decisions.js";
 import { fixtureName, fixtureUrl } from "../src/fixtures.js";
 import {
@@ -48,15 +50,43 @@ const now = new Date("2026-11-12T19:00:05Z");
 test("resolution window covers retry horizon and observation gap", () => {
   const spec = {
     observation: { at: "2026-11-12T19:13:00Z" },
-    retry: { max_attempts: 3, every: "3m" },
+    retry: { max_attempts: 5, every: "3m" },
   };
-  assert.equal(resolutionWindowMinutes(spec, 15, 10, 3, now.getTime()), 18);
-  assert.equal(resolutionWindowMinutes(spec, 25, 10, 3, now.getTime()), 25);
+  assert.equal(resolutionWindowMinutes(spec, 15, 10, 5, now.getTime()), 24);
+  assert.equal(resolutionWindowMinutes(spec, 25, 10, 5, now.getTime()), 25);
   const failure = {
     observation: { at: "2026-11-12T19:11:00Z" },
-    retry: { max_attempts: 3, every: "2m" },
+    retry: { max_attempts: 5, every: "3m" },
   };
-  assert.equal(resolutionWindowMinutes(failure, 20, 8, 3, now.getTime()), 20);
+  assert.equal(resolutionWindowMinutes(failure, 20, 5, 5, now.getTime()), 27);
+});
+
+test("A6 saved retry timestamp prevents the premature fallback trigger", () => {
+  const a6 = {
+    courtStatus: "retryscheduled",
+    observationAt: "2026-11-13T03:31:00Z",
+    retryAtNs: "1794541193000000000",
+    latestKeeperTriggerAtMs: Date.parse("2026-11-13T03:37:57.786Z"),
+    retryEveryMs: retryEveryMs("2m"),
+    nowMs: Date.parse("2026-11-13T03:38:09.745Z"),
+  };
+  assert.equal(triggerFallbackDue(a6), false);
+  assert.equal(
+    triggerFallbackDue({
+      ...a6,
+      nowMs: Date.parse("2026-11-13T03:42:58Z"),
+    }),
+    true,
+  );
+  assert.equal(triggerFallbackDue({ ...a6, courtStatus: "pending" }), false);
+  assert.equal(
+    triggerFallbackDue({
+      ...a6,
+      retryAtNs: "0",
+      nowMs: Date.parse("2026-11-13T03:40:58Z"),
+    }),
+    false,
+  );
 });
 
 test("NEGW requires permanent rejection, no repeated links, void and stake return", () => {
@@ -339,7 +369,8 @@ test("every scenario builds a canonical v1 spec with valid core fields", () => {
     assert.deepEqual(JSON.parse(specJson).outcomes, spec.outcomes);
     assert.ok(Date.parse(spec.observation.at) > now.getTime() + 5 * 60_000);
     assert.equal(spec.on_unavailable, "void");
-    assert.equal(spec.retry.max_attempts, 3);
+    assert.equal(spec.retry.max_attempts, 5);
+    assert.equal(spec.retry.every, "3m");
     assert.ok(spec.sources.length >= 1);
   }
 });
