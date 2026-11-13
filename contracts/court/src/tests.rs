@@ -75,7 +75,7 @@ fn register(court: &mut Court, unavailable: &str) -> String {
 fn market(hash: &str) -> Value {
     json!({"id":7,"creator":CREATOR,"title":"Test","metadata_hash":format!("noacourt:{hash}"),
         "outcomes":[{"id":0,"name":"Yes"},{"id":1,"name":"No"}],
-        "expiration_time":T - SECOND,"resolution_deadline":T + 200 * SECOND,
+        "expiration_time":T - SECOND,"resolution_deadline":T + 600 * SECOND,
         "resolver":COURT,"status":"Active","winning_outcome":null})
 }
 
@@ -290,6 +290,49 @@ fn link_rejections_and_creator_fallback() {
 }
 
 #[test]
+fn link_requires_full_retry_window_and_preserves_credit_on_rejection() {
+    let mut court = court();
+    let hash = register(&mut court, "void");
+    let required_deadline = T + (3 * 30 + 300) * SECOND;
+    let mut short = market(&hash);
+    short["resolution_deadline"] = json!(required_deadline - 1);
+    assert!(!link(&mut court, &hash, short));
+    assert!(get_logs()
+        .iter()
+        .any(|line| line.contains("resolution window too short for retries")));
+    assert!(court.get_market(7).is_none());
+    assert_eq!(court.get_credits(hash.clone(), account(CREATOR)), 1);
+
+    let mut boundary = market(&hash);
+    boundary["resolution_deadline"] = json!(required_deadline);
+    assert!(link(&mut court, &hash, boundary));
+    assert_eq!(court.get_credits(hash, account(CREATOR)), 0);
+}
+
+#[test]
+fn link_uses_five_minute_retry_interval_when_retry_is_absent() {
+    let mut court = court();
+    let raw = json!({
+        "version":1,"outcomes":["Yes","No"],
+        "observation":{"at":"2026-11-13T10:00:00Z"},
+        "on_unavailable":"void"
+    })
+    .to_string();
+    set(CREATOR, T - 100 * SECOND, NEAR);
+    let hash = court.register_spec(raw);
+    assert_eq!(court.get_spec(hash.clone()).unwrap().retry_every_ns, 0);
+
+    let mut short = market(&hash);
+    short["resolution_deadline"] = json!(T + 1_200 * SECOND - 1);
+    assert!(!link(&mut court, &hash, short));
+    assert_eq!(court.get_credits(hash.clone(), account(CREATOR)), 1);
+
+    let mut boundary = market(&hash);
+    boundary["resolution_deadline"] = json!(T + 1_200 * SECOND);
+    assert!(link(&mut court, &hash, boundary));
+}
+
+#[test]
 fn trigger_and_verdict_lifecycle() {
     let mut court = court();
     let hash = register(&mut court, "void");
@@ -318,6 +361,13 @@ fn trigger_and_verdict_lifecycle() {
     result(T + 32 * SECOND, PromiseResult::Failed);
     court.on_verdict("noa:7".into(), court.get_market(7).unwrap().pending_seq);
     assert_eq!(court.get_market(7).unwrap().status, Status::RetryScheduled);
+    assert_eq!(
+        court.get_market(7).unwrap().last_error.as_deref(),
+        Some("outlayer_execution_failed")
+    );
+    assert!(get_logs()
+        .iter()
+        .any(|line| line.contains("\"reason\":\"outlayer_execution_failed\"")));
     set(OTHER, T + 63 * SECOND, 0);
     court.trigger(7);
     resolve_result(&mut court, verdict(&hash, "resolved"), T + 64 * SECOND);
@@ -343,6 +393,49 @@ fn trigger_and_verdict_lifecycle() {
 }
 
 #[test]
+fn null_and_empty_outlayer_results_are_execution_failures() {
+    let mut court = court();
+    let hash = register(&mut court, "void");
+    assert!(link(&mut court, &hash, market(&hash)));
+
+    set(OTHER, T, 0);
+    court.trigger(7);
+    result(T + SECOND, PromiseResult::Successful(b"null".to_vec()));
+    court.on_verdict("noa:7".into(), court.get_market(7).unwrap().pending_seq);
+    let item = court.get_market(7).unwrap();
+    assert_eq!(item.status, Status::RetryScheduled);
+    assert_eq!(item.attempts, 1);
+    assert_eq!(
+        item.last_error.as_deref(),
+        Some("outlayer_execution_failed")
+    );
+    assert!(get_logs()
+        .iter()
+        .any(|line| line.contains("\"reason\":\"outlayer_execution_failed\"")));
+
+    set(OTHER, T + 31 * SECOND, 0);
+    court.trigger(7);
+    result(T + 32 * SECOND, PromiseResult::Successful(Vec::new()));
+    court.on_verdict("noa:7".into(), court.get_market(7).unwrap().pending_seq);
+    let item = court.get_market(7).unwrap();
+    assert_eq!(item.status, Status::RetryScheduled);
+    assert_eq!(item.attempts, 2);
+    assert_eq!(
+        item.last_error.as_deref(),
+        Some("outlayer_execution_failed")
+    );
+
+    assert_eq!(
+        parse_outlayer(br#"{"success":true,"output":null}"#).unwrap_err(),
+        "outlayer_execution_failed"
+    );
+    assert_eq!(
+        parse_outlayer(br#"{"success":false,"error":"worker stopped"}"#).unwrap_err(),
+        "outlayer: worker stopped"
+    );
+}
+
+#[test]
 fn retry_after_unavailable_and_void() {
     let mut court = court();
     let hash = register(&mut court, "void");
@@ -360,18 +453,18 @@ fn retry_after_unavailable_and_void() {
     court.trigger(7);
     resolve_result(&mut court, verdict(&hash, "unresolvable"), T + 41 * SECOND);
     assert_eq!(court.get_market(7).unwrap().status, Status::Unresolvable);
-    set(OTHER, T + 200 * SECOND, 0);
+    set(OTHER, T + 600 * SECOND, 0);
     assert!(panics(|| {
         court.void(7);
     }));
-    set(OTHER, T + 201 * SECOND, 0);
+    set(OTHER, T + 601 * SECOND, 0);
     court.void(7);
     assert!(function_calls()
         .iter()
         .any(|(receiver, method, deposit)| receiver == NOA
             && method == "void_market"
             && *deposit == 1));
-    result(T + 202 * SECOND, PromiseResult::Successful(vec![]));
+    result(T + 602 * SECOND, PromiseResult::Successful(vec![]));
     court.on_voided(7);
     assert_eq!(court.get_market(7).unwrap().status, Status::Voided);
 }
@@ -411,11 +504,11 @@ fn failed_forward_can_be_voided_after_deadline() {
     court.on_forwarded(7);
     assert_eq!(court.get_market(7).unwrap().forwarded, Some(false));
 
-    set(OTHER, T + 200 * SECOND, 0);
+    set(OTHER, T + 600 * SECOND, 0);
     assert!(panics(|| {
         court.void(7);
     }));
-    set(OTHER, T + 201 * SECOND, 0);
+    set(OTHER, T + 601 * SECOND, 0);
     court.void(7);
     assert!(court.get_market(7).unwrap().void_pending);
     assert!(panics(|| {
@@ -424,7 +517,7 @@ fn failed_forward_can_be_voided_after_deadline() {
     assert!(function_calls().iter().any(|(receiver, method, deposit)| {
         receiver == NOA && method == "void_market" && *deposit == 1
     }));
-    result(T + 202 * SECOND, PromiseResult::Successful(vec![]));
+    result(T + 602 * SECOND, PromiseResult::Successful(vec![]));
     court.on_voided(7);
     assert_eq!(court.get_market(7).unwrap().status, Status::Voided);
 }
@@ -436,7 +529,7 @@ fn unlinked_void_callback_rejections() {
 
     info["resolver"] = json!(OTHER);
     result(
-        T + 201 * SECOND,
+        T + 601 * SECOND,
         PromiseResult::Successful(info.to_string().into_bytes()),
     );
     assert!(matches!(
@@ -453,7 +546,7 @@ fn unlinked_void_callback_rejections() {
     info["resolver"] = json!(COURT);
     info["status"] = json!("Void");
     result(
-        T + 201 * SECOND,
+        T + 601 * SECOND,
         PromiseResult::Successful(info.to_string().into_bytes()),
     );
     assert!(matches!(
@@ -466,7 +559,7 @@ fn unlinked_void_callback_rejections() {
 
     info["status"] = json!("Active");
     result(
-        T + 200 * SECOND,
+        T + 600 * SECOND,
         PromiseResult::Successful(info.to_string().into_bytes()),
     );
     assert!(matches!(
@@ -478,7 +571,7 @@ fn unlinked_void_callback_rejections() {
         .any(|line| line.contains("resolution deadline not passed")));
 
     result(
-        T + 201 * SECOND,
+        T + 601 * SECOND,
         PromiseResult::Successful(b"null".to_vec()),
     );
     assert!(matches!(
@@ -491,12 +584,12 @@ fn unlinked_void_callback_rejections() {
 
     let hash = register(&mut court, "void");
     assert!(link(&mut court, &hash, market(&hash)));
-    set(OTHER, T + 201 * SECOND, 0);
+    set(OTHER, T + 601 * SECOND, 0);
     assert!(panics(|| {
         court.void_unlinked(7);
     }));
     result(
-        T + 201 * SECOND,
+        T + 601 * SECOND,
         PromiseResult::Successful(info.to_string().into_bytes()),
     );
     assert!(matches!(
@@ -512,11 +605,11 @@ fn unlinked_void_callback_rejections() {
 fn unlinked_void_schedules_noa_with_one_yocto_and_no_state() {
     let court = court();
     let info = market("sha256:unregistered");
-    set(OTHER, T + 201 * SECOND, 0);
+    set(OTHER, T + 601 * SECOND, 0);
     let before = env::storage_usage();
     court.void_unlinked(7);
     result(
-        T + 201 * SECOND,
+        T + 601 * SECOND,
         PromiseResult::Successful(info.to_string().into_bytes()),
     );
     assert!(matches!(
@@ -529,7 +622,7 @@ fn unlinked_void_schedules_noa_with_one_yocto_and_no_state() {
     assert!(court.get_market(7).is_none());
     assert_eq!(env::storage_usage(), before);
 
-    result(T + 202 * SECOND, PromiseResult::Successful(vec![]));
+    result(T + 602 * SECOND, PromiseResult::Successful(vec![]));
     assert!(court.on_unlinked_voided(7));
     assert!(get_logs()
         .iter()
@@ -572,12 +665,12 @@ fn exhausted_attempts_deadline_and_stale_pending_callback() {
     assert!(panics(|| {
         court.trigger(7);
     }));
-    set(OTHER, T + 201 * SECOND, 0);
+    set(OTHER, T + 601 * SECOND, 0);
     court.void(7);
-    result(T + 202 * SECOND, PromiseResult::Failed);
+    result(T + 602 * SECOND, PromiseResult::Failed);
     court.on_voided(7);
     assert_eq!(court.get_market(7).unwrap().status, Status::Unresolvable);
-    set(OTHER, T + 203 * SECOND, 0);
+    set(OTHER, T + 603 * SECOND, 0);
     court.void(7);
 }
 
@@ -586,7 +679,7 @@ fn trigger_after_deadline_is_rejected() {
     let mut court = court();
     let hash = register(&mut court, "void");
     assert!(link(&mut court, &hash, market(&hash)));
-    set(OTHER, T + 201 * SECOND, 0);
+    set(OTHER, T + 601 * SECOND, 0);
     assert!(panics(|| {
         court.trigger(7);
     }));

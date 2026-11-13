@@ -9,7 +9,7 @@ Measured with `NEAR_SANDBOX_BIN_PATH=/tmp/claude-0/w1/sandbox-bin/near-sandbox-w
 | `void_unlinked` (Noa view, void and callbacks) | 9 TGas | 80 TGas; contract minimum 80 TGas |
 | `trigger` → resolved → Noa forward and callbacks | 11 TGas | 220 TGas with default OutLayer gas 100 TGas |
 | `trigger` → retry or unresolvable | 7 TGas | 220 TGas with default settings |
-| `trigger` → OutLayer promise failure → retry scheduled | 6 TGas | 220 TGas with default settings |
+| `trigger` → OutLayer promise failure or JSON `null` → retry scheduled | 6 TGas | 220 TGas with default settings |
 | `trigger` → invalid spec hash | 7 TGas | 220 TGas with default settings |
 | `submit_keeper_verdict` (generic request) | 2 TGas | 100 TGas; allow more when forwarding to Noa |
 | `submit_keeper_verdict` (Noa-linked market → forward and callback) | 6 TGas | 100 TGas |

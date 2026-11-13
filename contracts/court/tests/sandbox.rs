@@ -5,9 +5,25 @@ use anyhow::Result;
 use near_sdk::serde_json::{json, Value};
 use near_workspaces::types::{Gas, NearToken};
 use near_workspaces::{Account, Contract, Worker};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 const NEAR: u128 = 10u128.pow(24);
+
+async fn fast_forward_past(
+    worker: &Worker<near_workspaces::network::Sandbox>,
+    target_timestamp_ns: u64,
+) -> Result<()> {
+    for _ in 0..100 {
+        let current_timestamp_ns = worker.view_block().await?.timestamp();
+        if current_timestamp_ns > target_timestamp_ns {
+            return Ok(());
+        }
+        worker.fast_forward(10).await?;
+    }
+    anyhow::bail!(
+        "sandbox timestamp did not pass {target_timestamp_ns}; latest was {}",
+        worker.view_block().await?.timestamp()
+    )
+}
 
 fn wasm(relative: &str) -> Vec<u8> {
     std::fs::read(format!("{}/{}", env!("CARGO_MANIFEST_DIR"), relative))
@@ -215,8 +231,13 @@ impl Setup {
 #[ignore = "requires a local near-sandbox binary; run build-test-deps.sh first"]
 async fn court_lifecycles_and_gas() -> Result<()> {
     let setup = Setup::new().await?;
-    let deadline =
-        (SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos() as u64) + 120_000_000_000;
+    let deadline = setup
+        .worker
+        .view_block()
+        .await?
+        .timestamp()
+        .checked_add(120_000_000_000)
+        .expect("sandbox timestamp overflow");
 
     let hash = setup.register("void").await?;
     let attacker_market = setup
@@ -262,6 +283,42 @@ async fn court_lifecycles_and_gas() -> Result<()> {
         .json()?;
     assert_eq!(victim_credits, 1);
 
+    let short_market = setup
+        .caller
+        .call(setup.noa.id(), "create_market")
+        .args_json(json!({
+            "title":"Retry window too short",
+            "metadata_hash":format!("noacourt:{hash}"),
+            "outcomes":["Yes","No"],
+            "expiration_time":1u64,
+            "resolution_deadline":1_577_837_102_000_000_000u64,
+            "resolver":setup.court.id()
+        }))
+        .transact()
+        .await?
+        .into_result()?
+        .json::<u64>()?;
+    let short_link = setup
+        .root
+        .call(setup.court.id(), "link_market")
+        .args_json(json!({"market_id":short_market,"spec_hash":null}))
+        .gas(Gas::from_tgas(100))
+        .transact()
+        .await?
+        .into_result()?;
+    assert!(!short_link.json::<bool>()?);
+    assert!(short_link
+        .logs()
+        .iter()
+        .any(|line| line.contains("resolution window too short for retries")));
+    let still_available: u32 = setup
+        .court
+        .view("get_credits")
+        .args_json(json!({"spec_hash":hash,"account_id":setup.caller.id()}))
+        .await?
+        .json()?;
+    assert_eq!(still_available, 1);
+
     let market_id = setup.create_and_link(&hash, deadline).await?;
     let spent_credits: u32 = setup
         .court
@@ -288,6 +345,30 @@ async fn court_lifecycles_and_gas() -> Result<()> {
         .json()?;
     assert_eq!(item["forwarded"], true);
 
+    let null_hash = setup.register("void").await?;
+    let null_market = setup.create_and_link(&null_hash, deadline).await?;
+    setup.set_response("null".into()).await?;
+    setup.trigger(null_market).await?;
+    let item: Value = setup
+        .court
+        .view("get_market")
+        .args_json(json!({"market_id":null_market}))
+        .await?
+        .json()?;
+    assert_eq!(item["status"], "RetryScheduled");
+    assert_eq!(item["attempts"], 1);
+    assert_eq!(item["last_error"], "outlayer_execution_failed");
+    setup.set_response(resolved(&null_hash)).await?;
+    fast_forward_past(&setup.worker, item["retry_at_ns"].as_u64().unwrap()).await?;
+    setup.trigger(null_market).await?;
+    let market: Value = setup
+        .noa
+        .view("get_market")
+        .args_json(json!({"market_id":null_market}))
+        .await?
+        .json()?;
+    assert_eq!(market["winning_outcome"], 0);
+
     let failure_hash = setup.register("void").await?;
     let failure_market = setup.create_and_link(&failure_hash, deadline).await?;
     setup.set_failure().await?;
@@ -300,12 +381,9 @@ async fn court_lifecycles_and_gas() -> Result<()> {
         .json()?;
     assert_eq!(item["status"], "RetryScheduled");
     assert_eq!(item["attempts"], 1);
-    assert!(item["last_error"]
-        .as_str()
-        .unwrap()
-        .contains("outlayer result"));
+    assert_eq!(item["last_error"], "outlayer_execution_failed");
     setup.set_response(resolved(&failure_hash)).await?;
-    setup.worker.fast_forward(2).await?;
+    fast_forward_past(&setup.worker, item["retry_at_ns"].as_u64().unwrap()).await?;
     setup.trigger(failure_market).await?;
     let item: Value = setup
         .court
@@ -338,6 +416,7 @@ async fn court_lifecycles_and_gas() -> Result<()> {
         .json()?;
     assert_eq!(item["status"], "RetryScheduled");
     setup.set_response(resolved(&retry_hash)).await?;
+    fast_forward_past(&setup.worker, item["retry_at_ns"].as_u64().unwrap()).await?;
     setup.trigger(retry_market).await?;
     let market: Value = setup
         .noa
@@ -348,12 +427,17 @@ async fn court_lifecycles_and_gas() -> Result<()> {
     assert_eq!(market["winning_outcome"], 0);
 
     let void_hash = setup.register("void").await?;
-    let void_deadline =
-        (SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos() as u64) + 5_000_000_000;
+    let void_deadline = setup
+        .worker
+        .view_block()
+        .await?
+        .timestamp()
+        .checked_add(5_000_000_000)
+        .expect("sandbox timestamp overflow");
     let void_market = setup.create_and_link(&void_hash, void_deadline).await?;
     setup.set_response(unresolvable(&void_hash)).await?;
     setup.trigger(void_market).await?;
-    setup.worker.fast_forward(10).await?;
+    fast_forward_past(&setup.worker, void_deadline).await?;
     setup
         .caller
         .call(setup.court.id(), "void")
@@ -498,8 +582,13 @@ async fn court_lifecycles_and_gas() -> Result<()> {
     assert!(linked_attempt.into_result().is_err());
 
     let unlinked_hash = setup.register("void").await?;
-    let unlinked_deadline =
-        (SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos() as u64) + 20_000_000_000;
+    let unlinked_deadline = setup
+        .worker
+        .view_block()
+        .await?
+        .timestamp()
+        .checked_add(20_000_000_000)
+        .expect("sandbox timestamp overflow");
     let unlinked_market = setup
         .caller
         .call(setup.noa.id(), "create_market")
@@ -544,7 +633,7 @@ async fn court_lifecycles_and_gas() -> Result<()> {
         .await?
         .json()?;
     assert_eq!(market["status"], "Active");
-    setup.worker.fast_forward(50).await?;
+    fast_forward_past(&setup.worker, unlinked_deadline).await?;
     let voided = setup
         .caller
         .call(setup.court.id(), "void_unlinked")

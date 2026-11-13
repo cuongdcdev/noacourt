@@ -13,6 +13,7 @@ const RESERVE: u128 = NEAR / 10;
 const STORAGE_BUFFER: u64 = 2_000;
 const MAX_SPEC: usize = 16 * 1024;
 const MAX_RESULT: usize = 32 * 1024;
+const FIVE_MINUTES_NS: u64 = 300_000_000_000;
 const GAS_LINK: Gas = Gas::from_tgas(25);
 const GAS_UNLINKED_INFO: Gas = Gas::from_tgas(35);
 const GAS_VERDICT: Gas = Gas::from_tgas(50);
@@ -510,6 +511,21 @@ impl Court {
             if market.resolution_deadline <= market.expiration_time {
                 return Err("invalid market deadline".into());
             }
+            let retry_every_ns = if spec.retry_max_attempts.is_some() {
+                spec.retry_every_ns
+            } else {
+                FIVE_MINUTES_NS
+            };
+            let minimum_deadline = (self.effective_max(&spec) as u64)
+                .checked_mul(retry_every_ns)
+                .and_then(|retry_window| spec.observation_at_ns.checked_add(retry_window))
+                .and_then(|end| end.checked_add(FIVE_MINUTES_NS));
+            if minimum_deadline
+                .map(|minimum| market.resolution_deadline < minimum)
+                .unwrap_or(true)
+            {
+                return Err("resolution window too short for retries".into());
+            }
             credits.insert(credit_key, creator_credits - 1);
             credits.flush();
             spec.credits = spec.credits.saturating_sub(1);
@@ -570,8 +586,14 @@ impl Court {
             return;
         }
         let result = env::promise_result_checked(0, MAX_RESULT)
-            .map_err(|error| format!("outlayer result: {error:?}"))
-            .and_then(|bytes| parse_outlayer(&bytes));
+            .map_err(|_| "outlayer_execution_failed".to_string())
+            .and_then(|bytes| {
+                if bytes.is_empty() {
+                    Err("outlayer_execution_failed".into())
+                } else {
+                    parse_outlayer(&bytes)
+                }
+            });
         self.process_verdict(id, result, true, "outlayer".into());
     }
 
@@ -1267,6 +1289,9 @@ fn parse_outlayer(bytes: &[u8]) -> Result<Value, String> {
             }
             _ => break,
         }
+    }
+    if value.is_null() {
+        return Err("outlayer_execution_failed".into());
     }
     if !value.is_object() {
         return Err("verdict must be an object".into());
