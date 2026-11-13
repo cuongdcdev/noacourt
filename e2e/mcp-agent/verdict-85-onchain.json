@@ -1,0 +1,55 @@
+{
+  "id": "noa:85",
+  "verdict": {
+    "jurors": null,
+    "mode": "resolve",
+    "outcome": "Yes",
+    "outcome_index": 0,
+    "reason": "threshold 3.517 true",
+    "resolver_version": "0.1.0",
+    "retry_after": null,
+    "sources": [
+      {
+        "as_of": "2026-11-13T08:43:00Z",
+        "error": null,
+        "evidence_sha256": "adb492ddd65cc18f1099185f4824292ee0fca0dbab516f1a1908a24b34153eb4",
+        "id": "binance",
+        "ok": true,
+        "url": "https://data-api.binance.vision/api/v3/klines?symbol=NEARUSDT&interval=1m&startTime=1794559320000&endTime=1794559440000&limit=3",
+        "value": "3.517"
+      },
+      {
+        "as_of": "2026-11-13T08:43:00Z",
+        "error": null,
+        "evidence_sha256": "f63c8a0e0619a45a20b691762703486c41c22839da793dfe522357c173b5a807",
+        "id": "okx",
+        "ok": true,
+        "url": "https://www.okx.com/api/v5/market/history-candles?instId=NEAR-USDT&bar=1m&limit=100&after=1794559440000&before=1794559320000",
+        "value": "3.516"
+      }
+    ],
+    "spec_hash": "sha256:03a0ce73625af4e38a974081d36017aea0355eee14b6962d6ea2ab14538ae1f8",
+    "status": "resolved",
+    "v": 1,
+    "value": "3.517"
+  },
+  "tee": true,
+  "submitted_by": "outlayer",
+  "attempt": 1,
+  "received_at_ns": 1794559564867042800,
+  "outlayer": {
+    "contract": "outlayer.testnet",
+    "source": {
+      "Project": {
+        "project_id": "court-ops.noamarket.testnet/court-resolver",
+        "version_key": "1e6a023c585d0c53dd762e318fc9e1f9723a72a4d7a4b41fcc798a2162769173"
+      }
+    },
+    "secrets_ref": {
+      "profile": "default",
+      "account_id": "court-ops.noamarket.testnet"
+    },
+    "deposit": "20000000000000000000000"
+  },
+  "applied_on_unavailable": false
+}

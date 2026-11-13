@@ -1,0 +1,819 @@
+{
+  "command": "sign",
+  "id": "vE61eiPU9b_MxvNPM_xWXA",
+  "account_id": "user2.noamarket.testnet",
+  "dry_run": false,
+  "started_at": "2026-11-13T08:28:24.603Z",
+  "request": {
+    "id": "vE61eiPU9b_MxvNPM_xWXA",
+    "status": "pending",
+    "expires_at": "2026-11-14T08:27:50.718Z",
+    "params": {
+      "title": "Will Binance NEAR/USDT 1-minute candle at 08:40 UTC close at or above 3.503 USDT?",
+      "outcomes": [
+        "Yes",
+        "No"
+      ],
+      "stake": "10",
+      "duration_minutes": 8,
+      "resolution_window_minutes": 20,
+      "creator": "user2.noamarket.testnet"
+    },
+    "spec_hash": "sha256:124fea74ffa1f2e1991365e9f93cd90c9cca3f2b94a7759297b8709bd4d7fccb",
+    "rules_markdown": "# Will the Binance NEAR/USDT 1-minute candle opening at 2026-11-13T08:40:00Z close at or above 3.503 USDT?\n\nOutcomes: [\"Yes\",\"No\"]\nObservation: 2026-11-13T08:40:00Z UTC; mode historical; max_delay 30m; baseline_at null\n\n## Sources\n- binance: binance_kline; verified.\n  Endpoint/params: {\"field\":\"close\",\"interval\":\"1m\",\"symbol\":\"NEARUSDT\"}.\n  Extract: path adapter candle close, type decimal, decimals 0.\n  Identity asserts: []; identity not specified.\n  Freshness: not specified; status not specified.\n- okx: okx_candle; verified.\n  Endpoint/params: {\"bar\":\"1m\",\"instId\":\"NEAR-USDT\"}.\n  Extract: path adapter candle close, type decimal, decimals 0.\n  Identity asserts: []; identity not specified.\n  Freshness: not specified; status not specified.\n\nAggregate: primary_then_fallback; tolerance 0.5%.\n## Decision\nYes if value >= 3.503 (greater than or equal).\nOutcome map: {\"false\":\"No\",\"true\":\"Yes\"}.\nOn unavailable (including missing/null): void.\nRetry: {\"every\":\"3m\",\"max_attempts\":5}.\nSimulated with resolver sha256 unknown: no\n",
+    "spec_summary": {
+      "question": "Will the Binance NEAR/USDT 1-minute candle opening at 2026-11-13T08:40:00Z close at or above 3.503 USDT?",
+      "observation": {
+        "at": "2026-11-13T08:40:00Z",
+        "baseline_at": null,
+        "max_delay": "30m",
+        "mode": "historical"
+      },
+      "outcomes": [
+        "Yes",
+        "No"
+      ],
+      "sources": [
+        {
+          "id": "binance",
+          "tool": "binance_kline"
+        },
+        {
+          "id": "okx",
+          "tool": "okx_candle"
+        }
+      ]
+    },
+    "tx_plan": [
+      {
+        "receiverId": "ai-resolver.noamarket.testnet",
+        "actions": [
+          {
+            "type": "FunctionCall",
+            "params": {
+              "methodName": "register_spec",
+              "args": {
+                "spec_json": "{\"aggregate\":{\"method\":\"primary_then_fallback\",\"tolerance\":\"0.5%\"},\"decide\":{\"kind\":\"threshold\",\"op\":\">=\",\"value\":\"3.503\"},\"observation\":{\"at\":\"2026-11-13T08:40:00Z\",\"baseline_at\":null,\"max_delay\":\"30m\",\"mode\":\"historical\"},\"on_unavailable\":\"void\",\"outcome_map\":{\"false\":\"No\",\"true\":\"Yes\"},\"outcomes\":[\"Yes\",\"No\"],\"question\":\"Will the Binance NEAR/USDT 1-minute candle opening at 2026-11-13T08:40:00Z close at or above 3.503 USDT?\",\"retry\":{\"every\":\"3m\",\"max_attempts\":5},\"rules_text_hash\":\"sha256:8798282f83ac2cf0bd10db3cba0c9e33f1e291adb8662893d6cdf8ab4e4eb1f1\",\"sources\":[{\"id\":\"binance\",\"params\":{\"field\":\"close\",\"interval\":\"1m\",\"symbol\":\"NEARUSDT\"},\"tool\":\"binance_kline\"},{\"id\":\"okx\",\"params\":{\"bar\":\"1m\",\"instId\":\"NEAR-USDT\"},\"tool\":\"okx_candle\"}],\"version\":1}"
+              },
+              "gas": "100000000000000",
+              "deposit": "100000000000000000000000"
+            }
+          }
+        ]
+      },
+      {
+        "receiverId": "v3.noamarket.testnet",
+        "actions": [
+          {
+            "type": "FunctionCall",
+            "params": {
+              "methodName": "create_market",
+              "args": {
+                "title": "Will Binance NEAR/USDT 1-minute candle at 08:40 UTC close at or above 3.503 USDT?",
+                "metadata_hash": "noacourt:sha256:124fea74ffa1f2e1991365e9f93cd90c9cca3f2b94a7759297b8709bd4d7fccb",
+                "token_id": "point.noamarket.testnet",
+                "stake_amount": "10000000000000000000",
+                "outcomes": [
+                  "Yes",
+                  "No"
+                ],
+                "resolver": "ai-resolver.noamarket.testnet",
+                "duration_minutes": 8,
+                "duration_days": null,
+                "resolution_window_minutes": 20
+              },
+              "gas": "100000000000000",
+              "deposit": "600000000000000000000000"
+            }
+          }
+        ]
+      }
+    ],
+    "result": null,
+    "network": {
+      "networkId": "testnet",
+      "nodeUrl": "https://test.rpc.fastnear.com",
+      "courtContract": "ai-resolver.noamarket.testnet",
+      "noaContract": "v3.noamarket.testnet"
+    },
+    "qr_url": "https://noacourtmcp.junstudio.xyz/sign/vE61eiPU9b_MxvNPM_xWXA",
+    "qr_png_data_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIwAAACMCAYAAACuwEE+AAAAAklEQVR4AewaftIAAAWJSURBVO3BQY4cxhEAwczG/P/LaR0LPLTcmCUlwxVhf2Gt/9JhrQeHtR4c1nrw4Rcqf1LFpPKNij9J5aZiUrmpuFH5kyqmw1oPDms9OKz14MPfqPhJKi8qblReqEwVk8pUMalMFZPKTcWkMqlMFTcVP0nl5rDWg8NaDw5rPfjwSOVFxYuKSWWqmCpuVG5UpoqbipuKf5LKi4oXh7UeHNZ6cFjrwYd/GZUXKjcVv5PK/5PDWg8Oaz04rPXgw79MxY3KTcWkclMxqdxU3FTcqEwVk8q/2WGtB4e1HhzWevDhUcU/qWJSuamYVF5UTCrfqPidKn6nw1oPDms9OKz14MPfUPmTVKaKSWWqmFSmit+pYlKZKiaVqeIbKn/SYa0Hh7UeHNZ68OEXFf/LKr5RMan8TiovKv5Jh7UeHNZ6cFjrwYdfqEwVk8pNxaTyouKFylTxQuUnVUwqU8U3VKaKG5WpYlK5qZgOaz04rPXgsNaDDz9MZaq4UblR+YbKTcWk8kLlhcpNxQuVqeJGZaqYVG4Oaz04rPXgsNaDD1+qeKHyomJS+UbFi4pJZaqYVKaKG5VJ5aZiUplUbiq+cVjrwWGtB4e1Hnz4YSo3FZPKi4pJZVKZKn5SxTdUbipuVG4qJpUblReHtR4c1npwWOvBh19UTCpTxaRyUzGpTBWTyouKSeVGZar4hsqNyk3FpHJTMalMKi8qJpWbw1oPDms9OKz14MMvVKaKSeWmYlKZKiaVqWJSuVGZKn4nlZuKG5WfVPFC5abi5rDWg8NaDw5rPfjwqOJGZaqYVKaKm4oblZ9UMam8UPlJFZPKVHGjclPx4rDWg8NaDw5rPfjwN1SmikllqphUpopJ5UXFjcpUMVXcqEwVk8pUMancVLxQeaHyOx3WenBY68FhrQcfflFxozJVvFCZKr5R8UJlqpgqXqi8ULmpmFS+UTGpfOOw1oPDWg8Oaz348AuVFypTxU3FjcpUMalMFZPKTcWkMlW8qPiGyqTyk1SmihuVqWI6rPXgsNaDw1oPPjyq+IbKTcULlZuKSeVPUrmpuFGZKiaVm4pJ5abi5rDWg8NaDw5rPbC/MKhMFTcqLypuVKaKSeWmYlKZKm5UbipuVKaKSeWm4hsqU8WNyk3FdFjrwWGtB4e1HthfuFCZKm5UXlTcqHyj4iep3FRMKjcVk8pU8Q2Vb1RMh7UeHNZ6cFjrwYdfqEwVk8pNxTdUpopJ5aZiUpkqJpWbipuKSeWFyu9UMalMFZPKzWGtB4e1HhzWevDhFxUvKl6ovFCZKn5SxYuKm4oblZuKSWWqmFRuKm5UXhzWenBY68FhrQf2Fy5UXlRMKlPFjcpNxaRyUzGpTBWTylQxqUwVk8pUMan8kyq+cVjrwWGtB4e1Hnz4hcpU8UJlqphUpoqpYlL5kyomlaliUvlGxaTykypuVG4qpsNaDw5rPTis9cD+wr+IylQxqUwVk8pNxaRyUzGp3FRMKlPFpHJT8ULlpmJSmSpuDms9OKz14LDWgw+/UPmTKn5SxY3KVPGTVKaKSeUbKlPFTcVNxYvDWg8Oaz04rPXgw9+o+Ekqv5PKC5WbiqliUpkqJpWfVPFC5abixWGtB4e1HhzWevDhkcqLihcVk8o3KiaVqWJSmVRuKn4nlW9UTCrfOKz14LDWg8NaDz78y6h8o2JSuVGZKm5UJpXfqeJGZar4hspUMR3WenBY68FhrQcf/sep/CSVqWKqeKHyouJG5YXKi4qbw1oPDms9OKz14MOjit+p4oXKVHGj8kJlqphUbiomlaliUvmGylTxQmWqmA5rPTis9eCw1oMPf0PlT1L5J1VMKpPKTcWkMlXcVHxD5UZlqpgqbg5rPTis9eCw1gP7C2v9lw5rPTis9eCw1oP/AJve12XPrB6IAAAAAElFTkSuQmCC"
+  },
+  "plan": {
+    "account_id": "user2.noamarket.testnet",
+    "tx_plan": [
+      {
+        "signerId": "user2.noamarket.testnet",
+        "receiverId": "ai-resolver.noamarket.testnet",
+        "actions": [
+          {
+            "type": "FunctionCall",
+            "params": {
+              "methodName": "register_spec",
+              "args": {
+                "spec_json": "{\"aggregate\":{\"method\":\"primary_then_fallback\",\"tolerance\":\"0.5%\"},\"decide\":{\"kind\":\"threshold\",\"op\":\">=\",\"value\":\"3.503\"},\"observation\":{\"at\":\"2026-11-13T08:40:00Z\",\"baseline_at\":null,\"max_delay\":\"30m\",\"mode\":\"historical\"},\"on_unavailable\":\"void\",\"outcome_map\":{\"false\":\"No\",\"true\":\"Yes\"},\"outcomes\":[\"Yes\",\"No\"],\"question\":\"Will the Binance NEAR/USDT 1-minute candle opening at 2026-11-13T08:40:00Z close at or above 3.503 USDT?\",\"retry\":{\"every\":\"3m\",\"max_attempts\":5},\"rules_text_hash\":\"sha256:8798282f83ac2cf0bd10db3cba0c9e33f1e291adb8662893d6cdf8ab4e4eb1f1\",\"sources\":[{\"id\":\"binance\",\"params\":{\"field\":\"close\",\"interval\":\"1m\",\"symbol\":\"NEARUSDT\"},\"tool\":\"binance_kline\"},{\"id\":\"okx\",\"params\":{\"bar\":\"1m\",\"instId\":\"NEAR-USDT\"},\"tool\":\"okx_candle\"}],\"version\":1}"
+              },
+              "gas": "100000000000000",
+              "deposit": "100000000000000000000000"
+            }
+          }
+        ]
+      },
+      {
+        "signerId": "user2.noamarket.testnet",
+        "receiverId": "v3.noamarket.testnet",
+        "actions": [
+          {
+            "type": "FunctionCall",
+            "params": {
+              "methodName": "create_market",
+              "args": {
+                "title": "Will Binance NEAR/USDT 1-minute candle at 08:40 UTC close at or above 3.503 USDT?",
+                "metadata_hash": "noacourt:sha256:124fea74ffa1f2e1991365e9f93cd90c9cca3f2b94a7759297b8709bd4d7fccb",
+                "token_id": "point.noamarket.testnet",
+                "stake_amount": "10000000000000000000",
+                "outcomes": [
+                  "Yes",
+                  "No"
+                ],
+                "resolver": "ai-resolver.noamarket.testnet",
+                "duration_minutes": 8,
+                "duration_days": null,
+                "resolution_window_minutes": 20
+              },
+              "gas": "100000000000000",
+              "deposit": "0"
+            }
+          }
+        ]
+      }
+    ],
+    "note": "Fee exempt; Noa creation deposit is zero"
+  },
+  "transactions": [
+    {
+      "receiver_id": "ai-resolver.noamarket.testnet",
+      "actions": [
+        {
+          "type": "FunctionCall",
+          "params": {
+            "methodName": "register_spec",
+            "args": {
+              "spec_json": "{\"aggregate\":{\"method\":\"primary_then_fallback\",\"tolerance\":\"0.5%\"},\"decide\":{\"kind\":\"threshold\",\"op\":\">=\",\"value\":\"3.503\"},\"observation\":{\"at\":\"2026-11-13T08:40:00Z\",\"baseline_at\":null,\"max_delay\":\"30m\",\"mode\":\"historical\"},\"on_unavailable\":\"void\",\"outcome_map\":{\"false\":\"No\",\"true\":\"Yes\"},\"outcomes\":[\"Yes\",\"No\"],\"question\":\"Will the Binance NEAR/USDT 1-minute candle opening at 2026-11-13T08:40:00Z close at or above 3.503 USDT?\",\"retry\":{\"every\":\"3m\",\"max_attempts\":5},\"rules_text_hash\":\"sha256:8798282f83ac2cf0bd10db3cba0c9e33f1e291adb8662893d6cdf8ab4e4eb1f1\",\"sources\":[{\"id\":\"binance\",\"params\":{\"field\":\"close\",\"interval\":\"1m\",\"symbol\":\"NEARUSDT\"},\"tool\":\"binance_kline\"},{\"id\":\"okx\",\"params\":{\"bar\":\"1m\",\"instId\":\"NEAR-USDT\"},\"tool\":\"okx_candle\"}],\"version\":1}"
+            },
+            "gas": "100000000000000",
+            "deposit": "100000000000000000000000"
+          }
+        }
+      ],
+      "started_at": "2026-11-13T08:28:24.631Z",
+      "hash": "3gwpqXhYouKSLv7pqPaW1KkUsFLuqpvaudX7sdAz2yKz",
+      "signed_at": "2026-11-13T08:28:28.349Z",
+      "outcome": {
+        "final_execution_status": "EXECUTED",
+        "receipts_outcome": [
+          {
+            "block_hash": "8SDDrXKpHUzj94yJyzoZX7JZdx38va1Wemn8TLj4KLLp",
+            "id": "Ghx3ccDzm1btB1iS6CXLg1H7pWRj6cL2GxStrheF183a",
+            "outcome": {
+              "executor_id": "ai-resolver.noamarket.testnet",
+              "gas_burnt": 2445922698902,
+              "logs": [
+                "EVENT_JSON:{\"standard\":\"noacourt\",\"version\":\"1.0.0\",\"event\":\"spec_registered\",\"data\":[{\"spec_hash\":\"sha256:124fea74ffa1f2e1991365e9f93cd90c9cca3f2b94a7759297b8709bd4d7fccb\"}]}"
+              ],
+              "metadata": {
+                "contracts": [
+                  {
+                    "local": "H6tSm2i9CY8N8rRtKv5nbckbqW3QXVAjsVkuRVcXFvdL"
+                  }
+                ],
+                "gas_profile": [
+                  {
+                    "cost": "NEW_ACTION_RECEIPT",
+                    "cost_category": "ACTION_COST",
+                    "gas_used": "108059500000"
+                  },
+                  {
+                    "cost": "TRANSFER",
+                    "cost_category": "ACTION_COST",
+                    "gas_used": "115123062500"
+                  },
+                  {
+                    "cost": "BASE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "5824898442"
+                  },
+                  {
+                    "cost": "CONTRACT_LOADING_BASE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "35445963"
+                  },
+                  {
+                    "cost": "CONTRACT_LOADING_BYTES",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "317906388570"
+                  },
+                  {
+                    "cost": "LOG_BASE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "3543313050"
+                  },
+                  {
+                    "cost": "LOG_BYTE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "2309788425"
+                  },
+                  {
+                    "cost": "READ_CACHED_TRIE_NODE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "59280000000"
+                  },
+                  {
+                    "cost": "READ_MEMORY_BASE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "36538084800"
+                  },
+                  {
+                    "cost": "READ_MEMORY_BYTE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "10822395051"
+                  },
+                  {
+                    "cost": "READ_REGISTER_BASE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "10068660744"
+                  },
+                  {
+                    "cost": "READ_REGISTER_BYTE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "143801958"
+                  },
+                  {
+                    "cost": "SHA256_BASE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "4540970250"
+                  },
+                  {
+                    "cost": "SHA256_BYTE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "18498008217"
+                  },
+                  {
+                    "cost": "STORAGE_READ_BASE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "169070537247"
+                  },
+                  {
+                    "cost": "STORAGE_READ_KEY_BYTE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "5695266072"
+                  },
+                  {
+                    "cost": "STORAGE_READ_VALUE_BYTE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "2811113004"
+                  },
+                  {
+                    "cost": "STORAGE_WRITE_BASE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "192590208000"
+                  },
+                  {
+                    "cost": "STORAGE_WRITE_EVICTED_BYTE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "16090770807"
+                  },
+                  {
+                    "cost": "STORAGE_WRITE_KEY_BYTE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "12968847528"
+                  },
+                  {
+                    "cost": "STORAGE_WRITE_VALUE_BYTE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "44201418075"
+                  },
+                  {
+                    "cost": "TOUCHING_TRIE_NODE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "54720000000"
+                  },
+                  {
+                    "cost": "UTF8_DECODING_BASE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "6223558122"
+                  },
+                  {
+                    "cost": "UTF8_DECODING_BYTE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "57732934842"
+                  },
+                  {
+                    "cost": "WASM_INSTRUCTION",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "264633708108"
+                  },
+                  {
+                    "cost": "WRITE_MEMORY_BASE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "14018974305"
+                  },
+                  {
+                    "cost": "WRITE_MEMORY_BYTE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "4017563700"
+                  },
+                  {
+                    "cost": "WRITE_REGISTER_BASE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "14327612430"
+                  },
+                  {
+                    "cost": "WRITE_REGISTER_BYTE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "4018253148"
+                  }
+                ],
+                "version": 4
+              },
+              "receipt_ids": [
+                "8FGEmEiEr2RrhY4SavXa9CUCsxr8Q7eTQUaV4kv22FUS",
+                "9TQna4PDASUNffUA6Ur1zgQpPZjFHTwAJ3cW8tLgHGqz"
+              ],
+              "status": {
+                "SuccessValue": "InNoYTI1NjoxMjRmZWE3NGZmYTFmMmUxOTkxMzY1ZTlmOTNjZDkwYzljY2EzZjJiOTRhNzc1OTI5N2I4NzA5YmQ0ZDdmY2NiIg=="
+              },
+              "tokens_burnt": "244592269890200000000"
+            },
+            "proof": [
+              {
+                "direction": "Left",
+                "hash": "7e6Wdv4ZdUBrFPRsamtcSkTZzzNfmQJDjGYnpj7U59aa"
+              }
+            ]
+          },
+          {
+            "block_hash": "7ERTzeT558DskvwMVv5AiLxixRiNXWezmPftfyrhAwtP",
+            "id": "8FGEmEiEr2RrhY4SavXa9CUCsxr8Q7eTQUaV4kv22FUS",
+            "outcome": {
+              "executor_id": "user2.noamarket.testnet",
+              "gas_burnt": 223182562500,
+              "logs": [],
+              "metadata": {
+                "contracts": [
+                  null
+                ],
+                "gas_profile": [],
+                "version": 4
+              },
+              "receipt_ids": [
+                "2SzgxZ56ZFQ792rQoKwcAhY2hBL7cUr6jek8KTJZWm3D"
+              ],
+              "status": {
+                "SuccessValue": ""
+              },
+              "tokens_burnt": "22318256250000000000"
+            },
+            "proof": [
+              {
+                "direction": "Right",
+                "hash": "9Eeb6kH6YgJw62tj34WaeENTybPb1uWwotQJLGR5B28Y"
+              },
+              {
+                "direction": "Left",
+                "hash": "8bQ2U31rw77fxxQmx3BQ3nFDxVuVUMpfAyhssxw4TDzY"
+              },
+              {
+                "direction": "Right",
+                "hash": "4hSwm8fhU4vpXPWHMqv6EbYrehxP2xK3ep8tGpXf5obw"
+              }
+            ]
+          },
+          {
+            "block_hash": "7ERTzeT558DskvwMVv5AiLxixRiNXWezmPftfyrhAwtP",
+            "id": "9TQna4PDASUNffUA6Ur1zgQpPZjFHTwAJ3cW8tLgHGqz",
+            "outcome": {
+              "executor_id": "user2.noamarket.testnet",
+              "gas_burnt": 223182562500,
+              "logs": [],
+              "metadata": {
+                "contracts": [
+                  null
+                ],
+                "gas_profile": [],
+                "version": 4
+              },
+              "receipt_ids": [],
+              "status": {
+                "SuccessValue": ""
+              },
+              "tokens_burnt": "0"
+            },
+            "proof": [
+              {
+                "direction": "Left",
+                "hash": "DbD91JUSVW2HnWXbPat2e5ZNxisri9myTzLSDorzcvpM"
+              },
+              {
+                "direction": "Left",
+                "hash": "8bQ2U31rw77fxxQmx3BQ3nFDxVuVUMpfAyhssxw4TDzY"
+              },
+              {
+                "direction": "Right",
+                "hash": "4hSwm8fhU4vpXPWHMqv6EbYrehxP2xK3ep8tGpXf5obw"
+              }
+            ]
+          }
+        ],
+        "status": {
+          "SuccessValue": "InNoYTI1NjoxMjRmZWE3NGZmYTFmMmUxOTkxMzY1ZTlmOTNjZDkwYzljY2EzZjJiOTRhNzc1OTI5N2I4NzA5YmQ0ZDdmY2NiIg=="
+        },
+        "transaction": {
+          "actions": [
+            {
+              "FunctionCall": {
+                "args": "eyJzcGVjX2pzb24iOiJ7XCJhZ2dyZWdhdGVcIjp7XCJtZXRob2RcIjpcInByaW1hcnlfdGhlbl9mYWxsYmFja1wiLFwidG9sZXJhbmNlXCI6XCIwLjUlXCJ9LFwiZGVjaWRlXCI6e1wia2luZFwiOlwidGhyZXNob2xkXCIsXCJvcFwiOlwiPj1cIixcInZhbHVlXCI6XCIzLjUwM1wifSxcIm9ic2VydmF0aW9uXCI6e1wiYXRcIjpcIjIwMjYtMTEtMTNUMDg6NDA6MDBaXCIsXCJiYXNlbGluZV9hdFwiOm51bGwsXCJtYXhfZGVsYXlcIjpcIjMwbVwiLFwibW9kZVwiOlwiaGlzdG9yaWNhbFwifSxcIm9uX3VuYXZhaWxhYmxlXCI6XCJ2b2lkXCIsXCJvdXRjb21lX21hcFwiOntcImZhbHNlXCI6XCJOb1wiLFwidHJ1ZVwiOlwiWWVzXCJ9LFwib3V0Y29tZXNcIjpbXCJZZXNcIixcIk5vXCJdLFwicXVlc3Rpb25cIjpcIldpbGwgdGhlIEJpbmFuY2UgTkVBUi9VU0RUIDEtbWludXRlIGNhbmRsZSBvcGVuaW5nIGF0IDIwMjYtMTEtMTNUMDg6NDA6MDBaIGNsb3NlIGF0IG9yIGFib3ZlIDMuNTAzIFVTRFQ/XCIsXCJyZXRyeVwiOntcImV2ZXJ5XCI6XCIzbVwiLFwibWF4X2F0dGVtcHRzXCI6NX0sXCJydWxlc190ZXh0X2hhc2hcIjpcInNoYTI1Njo4Nzk4MjgyZjgzYWMyY2YwYmQxMGRiM2NiYTBjOWUzM2YxZTI5MWFkYjg2NjI4OTNkNmNkZjhhYjRlNGViMWYxXCIsXCJzb3VyY2VzXCI6W3tcImlkXCI6XCJiaW5hbmNlXCIsXCJwYXJhbXNcIjp7XCJmaWVsZFwiOlwiY2xvc2VcIixcImludGVydmFsXCI6XCIxbVwiLFwic3ltYm9sXCI6XCJORUFSVVNEVFwifSxcInRvb2xcIjpcImJpbmFuY2Vfa2xpbmVcIn0se1wiaWRcIjpcIm9reFwiLFwicGFyYW1zXCI6e1wiYmFyXCI6XCIxbVwiLFwiaW5zdElkXCI6XCJORUFSLVVTRFRcIn0sXCJ0b29sXCI6XCJva3hfY2FuZGxlXCJ9XSxcInZlcnNpb25cIjoxfSJ9",
+                "deposit": "100000000000000000000000",
+                "gas": 100000000000000,
+                "method_name": "register_spec"
+              }
+            }
+          ],
+          "hash": "3gwpqXhYouKSLv7pqPaW1KkUsFLuqpvaudX7sdAz2yKz",
+          "nonce": 232947592000153,
+          "priority_fee": 0,
+          "public_key": "ed25519:9VioVX8DdQsrQntd5JZyDhqbMCfgJ6uFe7mz7tJM6ENH",
+          "receiver_id": "ai-resolver.noamarket.testnet",
+          "signature": "ed25519:643ww7TvWJKTqgEf9LBCd7Gx1zEJZvQAw4CqCRZ131tkxkjLNqpc9kyJqaWeEqSfzDb1zyV7BJNeKsMB5fBS75dJ",
+          "signer_id": "user2.noamarket.testnet"
+        },
+        "transaction_outcome": {
+          "block_hash": "4LGkMeggG9RgAqim8AWp2CmuszBmmFaKffuuebxAQ2QZ",
+          "id": "3gwpqXhYouKSLv7pqPaW1KkUsFLuqpvaudX7sdAz2yKz",
+          "outcome": {
+            "executor_id": "user2.noamarket.testnet",
+            "gas_burnt": 351737782940,
+            "logs": [],
+            "metadata": {
+              "gas_profile": null,
+              "version": 1
+            },
+            "receipt_ids": [
+              "Ghx3ccDzm1btB1iS6CXLg1H7pWRj6cL2GxStrheF183a"
+            ],
+            "status": {
+              "SuccessReceiptId": "Ghx3ccDzm1btB1iS6CXLg1H7pWRj6cL2GxStrheF183a"
+            },
+            "tokens_burnt": "35173778294000000000"
+          },
+          "proof": [
+            {
+              "direction": "Left",
+              "hash": "8wbcqYB7Nz5mV2GdkeXUCinXDdmoqPhr7c6vwke6A6zW"
+            }
+          ]
+        }
+      },
+      "status": {
+        "SuccessValue": "InNoYTI1NjoxMjRmZWE3NGZmYTFmMmUxOTkxMzY1ZTlmOTNjZDkwYzljY2EzZjJiOTRhNzc1OTI5N2I4NzA5YmQ0ZDdmY2NiIg=="
+      },
+      "success_value": "sha256:124fea74ffa1f2e1991365e9f93cd90c9cca3f2b94a7759297b8709bd4d7fccb",
+      "completed_at": "2026-11-13T08:28:31.826Z"
+    },
+    {
+      "receiver_id": "v3.noamarket.testnet",
+      "actions": [
+        {
+          "type": "FunctionCall",
+          "params": {
+            "methodName": "create_market",
+            "args": {
+              "title": "Will Binance NEAR/USDT 1-minute candle at 08:40 UTC close at or above 3.503 USDT?",
+              "metadata_hash": "noacourt:sha256:124fea74ffa1f2e1991365e9f93cd90c9cca3f2b94a7759297b8709bd4d7fccb",
+              "token_id": "point.noamarket.testnet",
+              "stake_amount": "10000000000000000000",
+              "outcomes": [
+                "Yes",
+                "No"
+              ],
+              "resolver": "ai-resolver.noamarket.testnet",
+              "duration_minutes": 8,
+              "duration_days": null,
+              "resolution_window_minutes": 20
+            },
+            "gas": "100000000000000",
+            "deposit": "0"
+          }
+        }
+      ],
+      "started_at": "2026-11-13T08:28:31.828Z",
+      "hash": "Ah6SWiEAeFxWUTNsG7TxoFL6jUXVxMD2mFBn389LStN8",
+      "signed_at": "2026-11-13T08:28:35.551Z",
+      "outcome": {
+        "final_execution_status": "EXECUTED",
+        "receipts_outcome": [
+          {
+            "block_hash": "Aba1amqdrbmgPpDRsrppkUCcH4gbufw3gtbBiJTpgDnK",
+            "id": "EiUvzBDZifkdJbMLm5NAWjpdjCvtYhheMcKQBHcQPLty",
+            "outcome": {
+              "executor_id": "v3.noamarket.testnet",
+              "gas_burnt": 2934593053196,
+              "logs": [
+                "EVENT_JSON:{\"standard\":\"noamarket\",\"version\":\"1.0.0\",\"event\":\"market_created\",\"data\":{\"market_id\":84,\"creator\":\"user2.noamarket.testnet\",\"token_id\":\"point.noamarket.testnet\",\"title\":\"Will Binance NEAR/USDT 1-minute candle at 08:40 UTC close at or above 3.503 USDT?\",\"b_shares_fp\":\"13705602888445152378\",\"outcomes\":[\"Yes\",\"No\"],\"expiration_time\":1794558996753098652,\"trade_fee_bps\":200,\"creator_share_bps\":4000,\"solver_share_bps\":1000}}"
+              ],
+              "metadata": {
+                "contracts": [
+                  {
+                    "local": "Qv4UqPbG1hr5hgUSC6jB6JPWJqhRCCcLzVjGy6MwaAY"
+                  }
+                ],
+                "gas_profile": [
+                  {
+                    "cost": "BASE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "10061188218"
+                  },
+                  {
+                    "cost": "CONTRACT_LOADING_BASE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "35445963"
+                  },
+                  {
+                    "cost": "CONTRACT_LOADING_BYTES",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "435408640220"
+                  },
+                  {
+                    "cost": "LOG_BASE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "3543313050"
+                  },
+                  {
+                    "cost": "LOG_BYTE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "5741474085"
+                  },
+                  {
+                    "cost": "READ_CACHED_TRIE_NODE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "171000000000"
+                  },
+                  {
+                    "cost": "READ_MEMORY_BASE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "60026853600"
+                  },
+                  {
+                    "cost": "READ_MEMORY_BYTE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "5732410164"
+                  },
+                  {
+                    "cost": "READ_REGISTER_BASE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "22654486674"
+                  },
+                  {
+                    "cost": "READ_REGISTER_BYTE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "77075484"
+                  },
+                  {
+                    "cost": "SHA256_BASE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "9081940500"
+                  },
+                  {
+                    "cost": "SHA256_BYTE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "940576689"
+                  },
+                  {
+                    "cost": "STORAGE_HAS_KEY_BASE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "54039896625"
+                  },
+                  {
+                    "cost": "STORAGE_HAS_KEY_BYTE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "862143660"
+                  },
+                  {
+                    "cost": "STORAGE_READ_BASE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "338141074494"
+                  },
+                  {
+                    "cost": "STORAGE_READ_KEY_BYTE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "4147639422"
+                  },
+                  {
+                    "cost": "STORAGE_READ_VALUE_BYTE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "1503749072"
+                  },
+                  {
+                    "cost": "STORAGE_WRITE_BASE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "385180416000"
+                  },
+                  {
+                    "cost": "STORAGE_WRITE_EVICTED_BYTE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "6005936409"
+                  },
+                  {
+                    "cost": "STORAGE_WRITE_KEY_BYTE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "8176012572"
+                  },
+                  {
+                    "cost": "STORAGE_WRITE_VALUE_BYTE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "21309736293"
+                  },
+                  {
+                    "cost": "TOUCHING_TRIE_NODE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "77520000000"
+                  },
+                  {
+                    "cost": "UTF8_DECODING_BASE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "3111779061"
+                  },
+                  {
+                    "cost": "UTF8_DECODING_BYTE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "126837508365"
+                  },
+                  {
+                    "cost": "WASM_INSTRUCTION",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "230586419316"
+                  },
+                  {
+                    "cost": "WRITE_MEMORY_BASE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "28037948610"
+                  },
+                  {
+                    "cost": "WRITE_MEMORY_BYTE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "2173570056"
+                  },
+                  {
+                    "cost": "WRITE_REGISTER_BASE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "31520747346"
+                  },
+                  {
+                    "cost": "WRITE_REGISTER_BYTE",
+                    "cost_category": "WASM_HOST_COST",
+                    "gas_used": "2136478968"
+                  }
+                ],
+                "version": 4
+              },
+              "receipt_ids": [
+                "6B33uKJDaU8UKLaeXmucpw9jh8tVFuRmRdKMXwkRs6UN"
+              ],
+              "status": {
+                "SuccessValue": "eyJtYXJrZXRfaWQiOjg0LCJiX3NoYXJlc19mcCI6IjEzNzA1NjAyODg4NDQ1MTUyMzc4IiwidG90YWxfZmVlIjoiMCJ9"
+              },
+              "tokens_burnt": "293459305319600000000"
+            },
+            "proof": [
+              {
+                "direction": "Right",
+                "hash": "6WoZvDxx6ZTYxFtU896vdDzUbZH51HE4SM48FLHQcBix"
+              },
+              {
+                "direction": "Left",
+                "hash": "GQVhHoRRj3TwTNNTEkrCdUMgZwE9iKppn4js17ksyGvC"
+              },
+              {
+                "direction": "Right",
+                "hash": "4LPickbHBP9SCpxHncu8yhkFVe4nnXwMMD44CeXNJxQw"
+              }
+            ]
+          },
+          {
+            "block_hash": "DdKFAnTPPg91JxEpJUfQusWEqve66qeAVervbLsBTMkB",
+            "id": "6B33uKJDaU8UKLaeXmucpw9jh8tVFuRmRdKMXwkRs6UN",
+            "outcome": {
+              "executor_id": "user2.noamarket.testnet",
+              "gas_burnt": 223182562500,
+              "logs": [],
+              "metadata": {
+                "contracts": [
+                  null
+                ],
+                "gas_profile": [],
+                "version": 4
+              },
+              "receipt_ids": [],
+              "status": {
+                "SuccessValue": ""
+              },
+              "tokens_burnt": "0"
+            },
+            "proof": [
+              {
+                "direction": "Right",
+                "hash": "6rXRLiWwU8hpVDEvfV1aFMgTNHQWJL5H9N1WYPb6HhcJ"
+              },
+              {
+                "direction": "Right",
+                "hash": "EmQBViedzYvy9fr3Pc9Ma9VcMHNkKm6nDBiRufuRnfzK"
+              },
+              {
+                "direction": "Right",
+                "hash": "Csq5gGBaQ8zraapR79n556oCkgJrEu6M8SmUU8eetHxE"
+              }
+            ]
+          }
+        ],
+        "status": {
+          "SuccessValue": "eyJtYXJrZXRfaWQiOjg0LCJiX3NoYXJlc19mcCI6IjEzNzA1NjAyODg4NDQ1MTUyMzc4IiwidG90YWxfZmVlIjoiMCJ9"
+        },
+        "transaction": {
+          "actions": [
+            {
+              "FunctionCall": {
+                "args": "eyJ0aXRsZSI6IldpbGwgQmluYW5jZSBORUFSL1VTRFQgMS1taW51dGUgY2FuZGxlIGF0IDA4OjQwIFVUQyBjbG9zZSBhdCBvciBhYm92ZSAzLjUwMyBVU0RUPyIsIm1ldGFkYXRhX2hhc2giOiJub2Fjb3VydDpzaGEyNTY6MTI0ZmVhNzRmZmExZjJlMTk5MTM2NWU5ZjkzY2Q5MGM5Y2NhM2YyYjk0YTc3NTkyOTdiODcwOWJkNGQ3ZmNjYiIsInRva2VuX2lkIjoicG9pbnQubm9hbWFya2V0LnRlc3RuZXQiLCJzdGFrZV9hbW91bnQiOiIxMDAwMDAwMDAwMDAwMDAwMDAwMCIsIm91dGNvbWVzIjpbIlllcyIsIk5vIl0sInJlc29sdmVyIjoiYWktcmVzb2x2ZXIubm9hbWFya2V0LnRlc3RuZXQiLCJkdXJhdGlvbl9taW51dGVzIjo4LCJkdXJhdGlvbl9kYXlzIjpudWxsLCJyZXNvbHV0aW9uX3dpbmRvd19taW51dGVzIjoyMH0=",
+                "deposit": "0",
+                "gas": 100000000000000,
+                "method_name": "create_market"
+              }
+            }
+          ],
+          "hash": "Ah6SWiEAeFxWUTNsG7TxoFL6jUXVxMD2mFBn389LStN8",
+          "nonce": 232947592000154,
+          "priority_fee": 0,
+          "public_key": "ed25519:9VioVX8DdQsrQntd5JZyDhqbMCfgJ6uFe7mz7tJM6ENH",
+          "receiver_id": "v3.noamarket.testnet",
+          "signature": "ed25519:gXMHAzJxv8ZstWvArN7ufmqja8F6GPwAWkRpzFpEzR612KEq9ovnfeLnTVWhJeLHti3ayth2EiuUn6mUNR6FLck",
+          "signer_id": "user2.noamarket.testnet"
+        },
+        "transaction_outcome": {
+          "block_hash": "4LxRKRzyzCF6ADs1M7re31dqWCnoXS1EC4niT4TKn76t",
+          "id": "Ah6SWiEAeFxWUTNsG7TxoFL6jUXVxMD2mFBn389LStN8",
+          "outcome": {
+            "executor_id": "user2.noamarket.testnet",
+            "gas_burnt": 328086660300,
+            "logs": [],
+            "metadata": {
+              "gas_profile": null,
+              "version": 1
+            },
+            "receipt_ids": [
+              "EiUvzBDZifkdJbMLm5NAWjpdjCvtYhheMcKQBHcQPLty"
+            ],
+            "status": {
+              "SuccessReceiptId": "EiUvzBDZifkdJbMLm5NAWjpdjCvtYhheMcKQBHcQPLty"
+            },
+            "tokens_burnt": "32808666030000000000"
+          },
+          "proof": [
+            {
+              "direction": "Right",
+              "hash": "FSxeQkP58uTSfrkfAMu9VBfhkvVmj2G4Q1wk3py46m4z"
+            },
+            {
+              "direction": "Right",
+              "hash": "2vmrnWLhmJJzycPqSP7RAa7QhKDUvFUAioiEiTcYb2EW"
+            },
+            {
+              "direction": "Right",
+              "hash": "92kcZ7d6FBVeC9wV6ZnD8RN84c9bhwCPQZB6Ka1d1Vm"
+            }
+          ]
+        }
+      },
+      "status": {
+        "SuccessValue": "eyJtYXJrZXRfaWQiOjg0LCJiX3NoYXJlc19mcCI6IjEzNzA1NjAyODg4NDQ1MTUyMzc4IiwidG90YWxfZmVlIjoiMCJ9"
+      },
+      "success_value": {
+        "market_id": 84,
+        "b_shares_fp": "13705602888445152378",
+        "total_fee": "0"
+      },
+      "completed_at": "2026-11-13T08:28:39.068Z"
+    }
+  ],
+  "updated_at": "2026-11-13T08:28:47.713Z",
+  "complete": {
+    "market_id": 84,
+    "account_id": "user2.noamarket.testnet",
+    "tx_hashes": [
+      "3gwpqXhYouKSLv7pqPaW1KkUsFLuqpvaudX7sdAz2yKz",
+      "Ah6SWiEAeFxWUTNsG7TxoFL6jUXVxMD2mFBn389LStN8"
+    ],
+    "linked": false,
+    "link_tx_hash": "7tuRFFc9di7UW9rM5YGbFN44J8LfXdXEygnbTG1LjMKF",
+    "link_error": "resolution window too short for retries"
+  },
+  "completed_at": "2026-11-13T08:28:47.713Z"
+}
