@@ -43,6 +43,17 @@ pub fn lint_with_context(spec_json: &str, context: &LintContext) -> LintReport {
     if !valid_outcomes {
         issue(&mut report, "outcomes_count", "$.outcomes");
     }
+    if let Some(outcomes) = outcomes {
+        for (index, outcome) in outcomes.iter().enumerate() {
+            if outcome.as_str().is_some_and(|name| name.len() > 160) {
+                issue(
+                    &mut report,
+                    "outcome_label_too_long",
+                    format!("$.outcomes[{index}]"),
+                );
+            }
+        }
+    }
     let at_text = get_str(&spec, "/observation/at");
     let at = at_text.and_then(parse_time);
     if at.is_none_or(|value| {

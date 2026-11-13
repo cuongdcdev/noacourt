@@ -126,13 +126,16 @@ pub fn run(input: &ResolverInput, deps: &Deps<'_>) -> Verdict {
             } else {
                 None
             };
-            decide(&spec["decide"], &value, baseline_value.as_ref()).map(|key| {
-                (
-                    key.clone(),
-                    Some(value.display()),
-                    format!("{} {} {}", kind, value.display(), key),
-                )
-            })
+            let key = decide(&spec["decide"], &value, baseline_value.as_ref())?;
+            let receipt = ReceiptContext {
+                spec: &spec,
+                sources,
+                current: &current,
+                baseline: &baseline,
+                at,
+            };
+            let left = describe_decision(&receipt, &value, baseline_value.as_ref(), &key)?;
+            Ok((key, Some(value.display()), left))
         })()
     };
     match result {
@@ -153,7 +156,11 @@ pub fn run(input: &ResolverInput, deps: &Deps<'_>) -> Verdict {
             verdict.outcome = Some(mapped.into());
             verdict.outcome_index = Some(index);
             verdict.value = value;
-            verdict.reason = reason.chars().take(200).collect();
+            verdict.reason = if kind == "text_judge" {
+                reason.chars().take(200).collect()
+            } else {
+                receipt_reason(&reason, &key, mapped)
+            };
             verdict.status = "resolved".into();
         }
         Err(error) => {
@@ -171,6 +178,154 @@ pub fn run(input: &ResolverInput, deps: &Deps<'_>) -> Verdict {
         }
     }
     verdict
+}
+
+fn source_field(source: &Value) -> &'static str {
+    if matches!(
+        source["tool"].as_str(),
+        Some("binance_kline" | "okx_candle" | "coinbase_candle")
+    ) {
+        if get_str(source, "/params/field") == Some("open") {
+            "open"
+        } else {
+            "close"
+        }
+    } else {
+        "value"
+    }
+}
+
+fn source_phrase(sources: &[Value], results: &[SourceResult], aggregate: &Value) -> String {
+    let used: Vec<_> = sources
+        .iter()
+        .zip(results)
+        .filter(|(_, result)| result.typed.is_some())
+        .collect();
+    let field = used
+        .first()
+        .map(|(source, _)| source_field(source))
+        .filter(|first| {
+            used.iter()
+                .all(|(source, _)| source_field(source) == *first)
+        })
+        .unwrap_or("value");
+    let source = match aggregate["method"].as_str().unwrap_or("") {
+        "median" => format!("median of {} sources", used.len()),
+        "all_agree" => format!("all_agree {} sources", used.len()),
+        _ => used
+            .first()
+            .map(|(_, result)| result.id.clone())
+            .unwrap_or_else(|| "source".into()),
+    };
+    format!("{source} {field}")
+}
+
+fn receipt_value(value: &TypedValue) -> String {
+    match value {
+        TypedValue::String(text) => serde_json::to_string(text).unwrap_or_else(|_| "\"\"".into()),
+        _ => value.display(),
+    }
+}
+
+struct ReceiptContext<'a> {
+    spec: &'a Value,
+    sources: &'a [Value],
+    current: &'a [SourceResult],
+    baseline: &'a [SourceResult],
+    at: time::OffsetDateTime,
+}
+
+fn describe_decision(
+    receipt: &ReceiptContext<'_>,
+    value: &TypedValue,
+    baseline_value: Option<&TypedValue>,
+    key: &str,
+) -> Result<String, String> {
+    let decide = &receipt.spec["decide"];
+    let source = source_phrase(receipt.sources, receipt.current, &receipt.spec["aggregate"]);
+    let actual = receipt_value(value);
+    match get_str(decide, "/kind").unwrap_or("") {
+        "threshold" => {
+            let op = get_str(decide, "/op").ok_or("decide_invalid")?;
+            let threshold = decimal(&decide["value"])
+                .ok_or("decimal_invalid")?
+                .normalize();
+            Ok(format!("{source} {actual} {op} threshold {threshold}"))
+        }
+        "buckets" => {
+            let edges = decide["edges"].as_array().ok_or("decide_invalid")?;
+            let index = key.parse::<usize>().map_err(|_| "decide_invalid")?;
+            let edge = |position: usize| -> Result<String, String> {
+                edges
+                    .get(position)
+                    .and_then(decimal)
+                    .map(|value| value.normalize().to_string())
+                    .ok_or_else(|| "decide_invalid".into())
+            };
+            let interval = if index == 0 {
+                format!("(-inf, {})", edge(0)?)
+            } else if index == edges.len() {
+                format!("[{}, +inf)", edge(index - 1)?)
+            } else {
+                format!("[{}, {})", edge(index - 1)?, edge(index)?)
+            };
+            Ok(format!("{source} {actual} in bucket {index} {interval}"))
+        }
+        "equals" => {
+            let expected = if matches!(value, TypedValue::Decimal(_)) {
+                decimal(&decide["value"])
+                    .map(|number| number.normalize().to_string())
+                    .unwrap_or_else(|| decide["value"].to_string())
+            } else {
+                decide["value"].to_string()
+            };
+            Ok(format!("{source} {actual} == {expected}"))
+        }
+        "bool" => Ok(format!("{source} {actual}")),
+        "change" => {
+            let previous = baseline_value.ok_or("decide_invalid")?;
+            let baseline_at = get_str(receipt.spec, "/observation/baseline_at")
+                .and_then(parse_time)
+                .ok_or("decide_invalid")?;
+            let baseline_source = source_phrase(
+                receipt.sources,
+                receipt.baseline,
+                &receipt.spec["aggregate"],
+            );
+            let baseline_label = if baseline_source == source {
+                String::new()
+            } else {
+                format!("{baseline_source} ")
+            };
+            Ok(format!(
+                "{source} {actual} at {} vs {baseline_label}{} at baseline {}",
+                format_time(receipt.at),
+                receipt_value(previous),
+                format_time(baseline_at)
+            ))
+        }
+        _ => Err("decide_invalid".into()),
+    }
+}
+
+fn receipt_reason(left: &str, key: &str, outcome: &str) -> String {
+    let tail = format!(" → {key} → {outcome}");
+    let available = 200_usize.saturating_sub(tail.len());
+    if left.len() <= available {
+        return format!("{left}{tail}");
+    }
+    let prefix_limit = available.saturating_sub("…".len());
+    let prefix: String = left
+        .chars()
+        .scan(0_usize, |used, character| {
+            let next = *used + character.len_utf8();
+            (next <= prefix_limit).then(|| {
+                *used = next;
+                character
+            })
+        })
+        .collect();
+    format!("{prefix}…{tail}")
 }
 
 fn codes(report: &crate::LintReport) -> String {

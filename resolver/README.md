@@ -16,6 +16,8 @@ Modes:
 
 Verdict fields, in order: `v`, `resolver_version`, `spec_hash`, `mode`, `status`, `outcome`, `outcome_index`, `value`, `retry_after`, `reason`, `sources`, `jurors`. Values are normalized decimal strings without exponent or redundant trailing zeroes. Timestamps are UTC RFC 3339 at seconds precision.
 
+For non-text decisions, `reason` names the contributing source or aggregate, shows the comparison or bucket interval, and ends with `→ result key → outcome`. It is capped at 200 bytes by shortening only the left side. Outcome labels over 160 bytes fail lint so the decision tail always remains intact.
+
 `http_json.extract.decimals` scales a base-unit integer or decimal as `raw / 10^decimals`. JSON numeric text is parsed directly to `Decimal`, without a binary float round trip. `text_judge.default_if_no_evidence` is the result key `yes` or `no`, which is then mapped by `outcome_map`. `median` requires at least half of declared sources to succeed; `all_agree` requires every source and uses a percentage tolerance relative to the smaller absolute value, or a plain decimal absolute tolerance.
 
 In resolve mode, a candle must be closed before its value can decide an outcome. An in-progress candle reports `candle_not_closed` and follows the retry policy. Undated `web_text` and `http_json` string evidence fetched within `observation.max_delay` is dated at the earlier of fetch time and `text_judge.window.to`; this represents the first fetch after the observation time. Simulate mode dates it at the current time. When no evidence is in the window, `jurors` is `null` because no model was called.

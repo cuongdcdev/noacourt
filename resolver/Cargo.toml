@@ -2,6 +2,7 @@
 name = "resolver"
 version = "0.1.0"
 edition = "2021"
+repository = "https://github.com/cuongdcdev/noa-court"
 
 [dependencies]
 court-core = { path = "../crates/court-core" }

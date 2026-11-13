@@ -60,6 +60,8 @@ impl Http for MockHttp {
             (200, include_bytes!("fixtures/http_json_low.json"))
         } else if req.url.ends_with("/text") {
             (200, include_bytes!("fixtures/http_json_text.json"))
+        } else if req.url.ends_with("/bool") {
+            (200, include_bytes!("fixtures/http_json_bool.json"))
         } else if self.assert_fail {
             (200, include_bytes!("fixtures/http_json_bad_identity.json"))
         } else {
@@ -488,6 +490,133 @@ fn hash_echo_and_verdict_golden() {
             .len(),
         64
     );
+}
+
+#[test]
+fn threshold_receipt_names_fallback_source_and_aggregate() {
+    struct BinanceUnavailable<'a>(&'a MockHttp);
+    impl Http for BinanceUnavailable<'_> {
+        fn request(&self, req: &HttpRequest) -> Result<HttpResponse, HttpError> {
+            if req.url.contains("binance") {
+                Err(HttpError::Transport("unavailable".into()))
+            } else {
+                self.0.request(req)
+            }
+        }
+    }
+
+    let (http, llm) = mocks();
+    let fallback = BinanceUnavailable(&http);
+    let verdict = run(&spec(), "resolve", AFTER, &fallback, &llm, 1);
+    assert_eq!(
+        verdict.reason,
+        "okx close 3.41 >= threshold 3.4 → true → Yes"
+    );
+
+    let mut value = spec();
+    value["aggregate"] = json!({"method":"median"});
+    let median = run(&value, "resolve", AFTER, &http, &llm, 1);
+    assert_eq!(median.value.as_deref(), Some("3.405"));
+    assert_eq!(
+        median.reason,
+        "median of 2 sources close 3.405 >= threshold 3.4 → true → Yes"
+    );
+
+    value["aggregate"] = json!({"method":"all_agree","tolerance":"0.5%"});
+    let agreed = run(&value, "resolve", AFTER, &http, &llm, 1);
+    assert_eq!(
+        agreed.reason,
+        "all_agree 2 sources close 3.4 >= threshold 3.4 → true → Yes"
+    );
+}
+
+#[test]
+fn buckets_receipt_shows_exact_lower_inclusive_interval() {
+    let (http, llm) = mocks();
+    for (edges, index, interval, outcome) in [
+        (vec!["3.50"], 0, "(-inf, 3.5)", "Low"),
+        (vec!["3.30", "3.50"], 1, "[3.3, 3.5)", "Mid"),
+        (vec!["3.30"], 1, "[3.3, +inf)", "Mid"),
+    ] {
+        let mut value = spec();
+        value["decide"] = json!({"kind":"buckets","edges":edges,"inclusive":"lower"});
+        value["outcomes"] = json!(["Low", "Mid", "High"]);
+        value["outcome_map"] = json!({"0":"Low","1":"Mid","2":"High"});
+        let verdict = run(&value, "resolve", AFTER, &http, &llm, 1);
+        assert_eq!(verdict.status, "resolved");
+        assert_eq!(
+            verdict.reason,
+            format!("binance close 3.4 in bucket {index} {interval} → {index} → {outcome}")
+        );
+    }
+}
+
+#[test]
+fn change_receipt_shows_observation_and_baseline() {
+    let (http, llm) = mocks();
+    let mut value = spec();
+    value["observation"]["baseline_at"] = json!("2026-11-13T00:12:20Z");
+    value["decide"] = json!({"kind":"change","tie":"No"});
+    value["outcome_map"] = json!({"up":"Yes","down":"No","tie":"No"});
+    let verdict = run(&value, "resolve", AFTER, &http, &llm, 1);
+    assert_eq!(
+        verdict.reason,
+        "binance close 3.4 at 2026-11-13T00:13:20Z vs 3.4 at baseline 2026-11-13T00:12:20Z → tie → No"
+    );
+}
+
+#[test]
+fn equals_receipt_quotes_string_values() {
+    let (http, llm) = mocks();
+    let mut value = spec();
+    value["sources"] = json!([{"id":"api","tool":"http_json","request":{"url":"https://example.org/text"},"identity":"url_only","extract":{"path":"$.data.statement","type":"string"}}]);
+    value["decide"] = json!({"kind":"equals","value":"Project launched successfully."});
+    let verdict = run(&value, "resolve", AFTER, &http, &llm, 1);
+    assert_eq!(
+        verdict.reason,
+        "api value \"Project launched successfully.\" == \"Project launched successfully.\" → true → Yes"
+    );
+
+    value["decide"]["value"] = json!(42);
+    let mismatch = run(&value, "resolve", AFTER, &http, &llm, 1);
+    assert_eq!(mismatch.status, "resolved");
+    assert_eq!(
+        mismatch.reason,
+        "api value \"Project launched successfully.\" == 42 → false → No"
+    );
+}
+
+#[test]
+fn bool_receipt_shows_boolean_value() {
+    let (http, llm) = mocks();
+    let mut value = spec();
+    value["sources"] = json!([{"id":"api","tool":"http_json","request":{"url":"https://example.org/bool"},"identity":"url_only","extract":{"path":"$.data.active","type":"bool"}}]);
+    value["decide"] = json!({"kind":"bool"});
+    let verdict = run(&value, "resolve", AFTER, &http, &llm, 1);
+    assert_eq!(verdict.reason, "api value true → true → Yes");
+}
+
+#[test]
+fn receipt_truncates_left_and_preserves_decision_tail() {
+    let (http, llm) = mocks();
+    let mut value = spec();
+    value["sources"][0]["id"] = json!("ü".repeat(200));
+    let verdict = run(&value, "resolve", AFTER, &http, &llm, 1);
+    assert_eq!(verdict.status, "resolved");
+    assert!(verdict.reason.len() <= 200);
+    assert!(verdict.reason.ends_with("→ true → Yes"));
+}
+
+#[test]
+fn long_outcome_label_is_linted_to_keep_receipt_tail_intact() {
+    let mut value = spec();
+    value["outcomes"][0] = json!("Y".repeat(161));
+    value["outcome_map"]["true"] = value["outcomes"][0].clone();
+    let report = lint::lint(&value.to_string());
+    assert!(report
+        .errors
+        .iter()
+        .any(|error| error.code == "outcome_label_too_long"));
 }
 
 fn judge_spec(window_from: &str, window_to: &str) -> Value {
