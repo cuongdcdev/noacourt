@@ -45,6 +45,24 @@ pub trait Clock {
     fn now(&self) -> OffsetDateTime;
 }
 
+/// Monotonic time left for the entire resolver invocation.
+pub trait Budget {
+    fn remaining(&self) -> std::time::Duration;
+}
+
+/// Leave time to serialize and return a Verdict after the last network call.
+pub fn call_timeout(
+    budget: &dyn Budget,
+    normal: std::time::Duration,
+) -> Option<std::time::Duration> {
+    let remaining = budget.remaining();
+    if remaining < std::time::Duration::from_secs(3) {
+        return None;
+    }
+    let allowed = normal.min(remaining.saturating_sub(std::time::Duration::from_secs(5)));
+    (!allowed.is_zero()).then_some(allowed)
+}
+
 pub trait Llm {
     fn chat(&self, model: &str, system: &str, user: &str) -> Result<String, String>;
 }
@@ -56,6 +74,7 @@ pub trait Env {
 pub struct Deps<'a> {
     pub http: &'a dyn Http,
     pub clock: &'a dyn Clock,
+    pub budget: &'a dyn Budget,
     pub llm: &'a dyn Llm,
     pub env: &'a dyn Env,
 }

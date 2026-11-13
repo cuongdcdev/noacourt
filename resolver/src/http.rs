@@ -1,7 +1,17 @@
-use std::time::{Duration, Instant};
-
 #[cfg(not(all(target_arch = "wasm32", target_os = "wasi")))]
 use std::io::Read;
+#[cfg(not(all(target_arch = "wasm32", target_os = "wasi")))]
+use std::time::{Duration, Instant};
+
+#[cfg(any(test, all(target_arch = "wasm32", target_os = "wasi")))]
+fn timeout_ns(timeout_ms: u64) -> u64 {
+    timeout_ms.saturating_mul(1_000_000)
+}
+
+#[cfg(any(test, all(target_arch = "wasm32", target_os = "wasi")))]
+fn deadline_ns(start_ns: u64, timeout_ms: u64) -> u64 {
+    start_ns.saturating_add(timeout_ns(timeout_ms))
+}
 
 #[cfg(not(all(target_arch = "wasm32", target_os = "wasi")))]
 fn is_native_timeout(error: &(dyn std::error::Error + 'static)) -> bool {
@@ -19,11 +29,7 @@ fn is_native_timeout(error: &(dyn std::error::Error + 'static)) -> bool {
 }
 
 #[cfg(all(target_arch = "wasm32", target_os = "wasi"))]
-fn wasi_http_error(
-    error: &wasi::http::types::ErrorCode,
-    started: Instant,
-    timeout: Duration,
-) -> String {
+fn wasi_http_error(error: &wasi::http::types::ErrorCode, deadline: u64) -> String {
     use wasi::http::types::ErrorCode;
 
     let timed_out = matches!(
@@ -34,7 +40,7 @@ fn wasi_http_error(
             | ErrorCode::ConnectionWriteTimeout
             | ErrorCode::HttpResponseTimeout
     );
-    if timed_out || started.elapsed() >= timeout {
+    if timed_out || wasi::clocks::monotonic_clock::now() >= deadline {
         "HTTP request timed out".into()
     } else {
         "HTTP transport failed".into()
@@ -42,11 +48,31 @@ fn wasi_http_error(
 }
 
 #[cfg(all(target_arch = "wasm32", target_os = "wasi"))]
-fn wasi_elapsed_error(started: Instant, timeout: Duration) -> String {
-    if started.elapsed() >= timeout {
+fn wasi_elapsed_error(deadline: u64) -> String {
+    if wasi::clocks::monotonic_clock::now() >= deadline {
         "HTTP request timed out".into()
     } else {
         "HTTP transport failed".into()
+    }
+}
+
+#[cfg(all(target_arch = "wasm32", target_os = "wasi"))]
+fn wasi_wait_ready(pollable: &wasi::io::poll::Pollable, deadline: u64) -> Result<(), String> {
+    use wasi::clocks::monotonic_clock;
+    use wasi::io::poll;
+
+    let timer = monotonic_clock::subscribe_instant(deadline);
+    loop {
+        if monotonic_clock::now() >= deadline {
+            return Err("HTTP request timed out".into());
+        }
+        let ready = poll::poll(&[pollable, &timer]);
+        if ready.contains(&1) || monotonic_clock::now() >= deadline {
+            return Err("HTTP request timed out".into());
+        }
+        if ready.contains(&0) {
+            return Ok(());
+        }
     }
 }
 
@@ -100,6 +126,7 @@ fn native_request(
     let agent = ureq::AgentBuilder::new()
         .redirects(0)
         .timeout(timeout)
+        .timeout_read(timeout)
         .build();
     let mut req = agent.request(method, url).set("User-Agent", USER_AGENT);
     for (name, value) in headers {
@@ -124,19 +151,27 @@ fn native_request(
     };
     let status = response.status();
     let mut bytes = Vec::new();
-    response
-        .into_reader()
-        .take(max_bytes.saturating_add(1) as u64)
-        .read_to_end(&mut bytes)
-        .map_err(|error| {
+    let mut reader = response.into_reader();
+    let mut chunk = [0_u8; 8192];
+    loop {
+        if started.elapsed() >= timeout {
+            return Err("HTTP request timed out".into());
+        }
+        let limit = (max_bytes.saturating_add(1) - bytes.len()).min(chunk.len());
+        let read = reader.read(&mut chunk[..limit]).map_err(|error| {
             if error.kind() == std::io::ErrorKind::TimedOut || started.elapsed() >= timeout {
                 "HTTP request timed out".to_string()
             } else {
                 "HTTP body read failed".to_string()
             }
         })?;
-    if bytes.len() > max_bytes {
-        return Err("HTTP response too large".into());
+        if read == 0 {
+            break;
+        }
+        bytes.extend_from_slice(&chunk[..read]);
+        if bytes.len() > max_bytes {
+            return Err("HTTP response too large".into());
+        }
     }
     Ok(HttpResponse {
         status,
@@ -159,7 +194,7 @@ fn wasi_request(
     };
     use wasi::io::streams::StreamError;
 
-    let started = Instant::now();
+    let deadline = deadline_ns(wasi::clocks::monotonic_clock::now(), timeout_ms);
     let parsed = url::Url::parse(url).map_err(|_| "invalid URL")?;
     let scheme = if parsed.scheme() == "https" {
         Scheme::Https
@@ -197,51 +232,75 @@ fn wasi_request(
         .map_err(|_| "invalid request path")?;
     let outgoing = request.body().map_err(|_| "request body unavailable")?;
     if let Some(bytes) = body {
-        outgoing
+        let writable = outgoing
             .write()
-            .map_err(|_| "request body write unavailable")?
-            .blocking_write_and_flush(bytes)
-            .map_err(|_| "request body write failed")?;
+            .map_err(|_| "request body write unavailable")?;
+        let writable_pollable = writable.subscribe();
+        let mut remaining = bytes;
+        while !remaining.is_empty() {
+            if wasi::clocks::monotonic_clock::now() >= deadline {
+                return Err("HTTP request timed out".into());
+            }
+            let capacity = writable
+                .check_write()
+                .map_err(|_| wasi_elapsed_error(deadline))?;
+            if capacity == 0 {
+                wasi_wait_ready(&writable_pollable, deadline)?;
+                continue;
+            }
+            let count = remaining
+                .len()
+                .min(usize::try_from(capacity).unwrap_or(usize::MAX))
+                .min(4096);
+            writable
+                .write(&remaining[..count])
+                .map_err(|_| wasi_elapsed_error(deadline))?;
+            remaining = &remaining[count..];
+        }
+        writable.flush().map_err(|_| wasi_elapsed_error(deadline))?;
+        wasi_wait_ready(&writable_pollable, deadline)?;
+        writable
+            .check_write()
+            .map_err(|_| wasi_elapsed_error(deadline))?;
     }
     OutgoingBody::finish(outgoing, None).map_err(|_| "request body finish failed")?;
 
-    let timeout = Duration::from_millis(timeout_ms);
-    let timeout_ns = timeout.as_nanos().min(u64::MAX as u128) as u64;
+    let timeout_ns = timeout_ns(timeout_ms);
     let options = RequestOptions::new();
-    options
-        .set_connect_timeout(Some(timeout_ns))
-        .map_err(|_| "connect timeout invalid")?;
-    options
-        .set_first_byte_timeout(Some(timeout_ns))
-        .map_err(|_| "first byte timeout invalid")?;
-    options
-        .set_between_bytes_timeout(Some(timeout_ns))
-        .map_err(|_| "between bytes timeout invalid")?;
+    let _ = options.set_connect_timeout(Some(timeout_ns));
+    let _ = options.set_first_byte_timeout(Some(timeout_ns));
+    let _ = options.set_between_bytes_timeout(Some(timeout_ns));
     let future = outgoing_handler::handle(request, Some(options))
-        .map_err(|error| wasi_http_error(&error, started, timeout))?;
-    let response_result = match future.get() {
-        Some(result) => result,
-        None => {
-            future.subscribe().block();
-            future
-                .get()
-                .ok_or_else(|| wasi_elapsed_error(started, timeout))?
+        .map_err(|error| wasi_http_error(&error, deadline))?;
+    let future_pollable = future.subscribe();
+    let response_result = loop {
+        if wasi::clocks::monotonic_clock::now() >= deadline {
+            return Err("HTTP request timed out".into());
         }
+        if let Some(result) = future.get() {
+            break result;
+        }
+        wasi_wait_ready(&future_pollable, deadline)?;
     };
     let response = response_result
-        .map_err(|_| wasi_elapsed_error(started, timeout))?
-        .map_err(|error| wasi_http_error(&error, started, timeout))?;
+        .map_err(|_| wasi_elapsed_error(deadline))?
+        .map_err(|error| wasi_http_error(&error, deadline))?;
     let status = response.status();
     let incoming = response.consume().map_err(|_| "HTTP body unavailable")?;
     let stream = incoming.stream().map_err(|_| "HTTP stream unavailable")?;
+    let stream_pollable = stream.subscribe();
     let mut bytes = Vec::new();
     loop {
-        if started.elapsed() >= timeout {
+        if wasi::clocks::monotonic_clock::now() >= deadline {
             return Err("HTTP request timed out".into());
         }
         let read_len = (max_bytes.saturating_add(1) - bytes.len()).min(8192) as u64;
-        match stream.blocking_read(read_len) {
+        match stream.read(read_len) {
             Ok(chunk) => {
+                if chunk.is_empty() {
+                    wasi_wait_ready(&stream_pollable, deadline)?;
+                    continue;
+                }
                 bytes.extend_from_slice(&chunk);
                 if bytes.len() > max_bytes {
                     return Err("HTTP response too large".into());
@@ -253,14 +312,14 @@ fn wasi_request(
                     body: bytes,
                 })
             }
-            Err(_) => return Err(wasi_elapsed_error(started, timeout)),
+            Err(_) => return Err(wasi_elapsed_error(deadline)),
         }
     }
 }
 
 #[cfg(all(test, not(all(target_arch = "wasm32", target_os = "wasi"))))]
 mod tests {
-    use super::is_native_timeout;
+    use super::{deadline_ns, is_native_timeout, timeout_ns};
     use std::io;
 
     #[test]
@@ -269,5 +328,13 @@ mod tests {
         let refused = io::Error::from(io::ErrorKind::ConnectionRefused);
         assert!(is_native_timeout(&timeout));
         assert!(!is_native_timeout(&refused));
+    }
+
+    #[test]
+    fn http_timeout_deadline_arithmetic_is_saturating() {
+        assert_eq!(timeout_ns(20_000), 20_000_000_000);
+        assert_eq!(deadline_ns(100, 20_000), 20_000_000_100);
+        assert_eq!(deadline_ns(u64::MAX - 1, 20_000), u64::MAX);
+        assert_eq!(timeout_ns(u64::MAX), u64::MAX);
     }
 }

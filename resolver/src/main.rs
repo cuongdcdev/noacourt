@@ -1,16 +1,35 @@
 use court_core::{
-    Clock, Deps, Env, Http, HttpError, HttpRequest, HttpResponse, LintError, LintReport, Llm,
-    ResolverInput, Verdict,
+    call_timeout, Budget, Clock, Deps, Env, Http, HttpError, HttpRequest, HttpResponse, LintError,
+    LintReport, Llm, ResolverInput, Verdict,
 };
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
+use std::time::{Duration, Instant};
 use time::OffsetDateTime;
 
 struct SystemClock;
 impl Clock for SystemClock {
     fn now(&self) -> OffsetDateTime {
         OffsetDateTime::now_utc()
+    }
+}
+
+struct RunBudget {
+    deadline: Instant,
+}
+
+impl RunBudget {
+    fn new() -> Self {
+        Self {
+            deadline: Instant::now() + Duration::from_secs(90),
+        }
+    }
+}
+
+impl Budget for RunBudget {
+    fn remaining(&self) -> Duration {
+        self.deadline.saturating_duration_since(Instant::now())
     }
 }
 
@@ -61,11 +80,14 @@ impl Http for NetworkHttp {
 struct NearAi<'a> {
     http: &'a dyn Http,
     env: &'a dyn Env,
+    budget: &'a dyn Budget,
 }
 
 impl Llm for NearAi<'_> {
     fn chat(&self, model: &str, system: &str, user: &str) -> Result<String, String> {
         let key = self.env.get("NEAR_AI_API").ok_or("secret_missing")?;
+        let timeout =
+            call_timeout(self.budget, Duration::from_secs(20)).ok_or("budget_exhausted")?;
         let body = json!({
             "model": model,
             "messages": [
@@ -74,7 +96,7 @@ impl Llm for NearAi<'_> {
             ],
             "response_format":{"type":"json_object"},
             "temperature":0,
-            "max_tokens":1500
+            "max_tokens":1000
         })
         .to_string()
         .into_bytes();
@@ -86,7 +108,7 @@ impl Llm for NearAi<'_> {
             url: "https://cloud-api.near.ai/v1/chat/completions".into(),
             headers,
             body,
-            timeout_ms: 28_000,
+            timeout_ms: timeout.as_millis().max(1).min(u64::MAX as u128) as u64,
         };
         let response = self.http.request(&req).map_err(|error| match error {
             HttpError::Timeout => "llm_timeout",
@@ -105,7 +127,7 @@ impl Llm for NearAi<'_> {
     }
 }
 
-fn process(input: &str) -> Verdict {
+fn process(input: &str, budget: &dyn Budget) -> Verdict {
     let parsed: ResolverInput = match serde_json::from_str(input) {
         Ok(input) => input,
         Err(_) => {
@@ -121,10 +143,12 @@ fn process(input: &str) -> Verdict {
     let llm = NearAi {
         http: &http,
         env: &env,
+        budget,
     };
     let deps = Deps {
         http: &http,
         clock: &clock,
+        budget,
         llm: &llm,
         env: &env,
     };
@@ -167,9 +191,10 @@ fn serialization_error_line() -> String {
 }
 
 fn main() {
+    let budget = RunBudget::new();
     let mut input = String::new();
     let _ = io::stdin().read_to_string(&mut input);
-    let mut verdict = process(&input);
+    let mut verdict = process(&input, &budget);
     verdict.resolver_version = env!("CARGO_PKG_VERSION").into();
     let line = encode_verdict(verdict);
     let mut stdout = io::stdout().lock();
@@ -181,6 +206,20 @@ fn main() {
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    struct FixedBudget;
+    impl Budget for FixedBudget {
+        fn remaining(&self) -> Duration {
+            Duration::from_secs(90)
+        }
+    }
+
+    struct LimitedBudget(Duration);
+    impl Budget for LimitedBudget {
+        fn remaining(&self) -> Duration {
+            self.0
+        }
+    }
 
     #[test]
     fn oversized_verdict_is_bounded_and_never_resolved() {
@@ -210,13 +249,15 @@ mod tests {
     }
     impl Http for TestHttp {
         fn request(&self, req: &HttpRequest) -> Result<HttpResponse, HttpError> {
+            let body: Value = serde_json::from_slice(&req.body).unwrap();
+            assert_eq!(body["max_tokens"], 1000);
             self.timeout_ms.set(req.timeout_ms);
             self.result.clone()
         }
     }
 
     #[test]
-    fn near_ai_returns_distinct_safe_errors_and_uses_28_second_timeout() {
+    fn near_ai_returns_distinct_safe_errors_and_uses_20_second_timeout() {
         let cases = [
             (Err(HttpError::Timeout), "llm_timeout"),
             (
@@ -265,10 +306,11 @@ mod tests {
             let llm = NearAi {
                 http: &http,
                 env: &env,
+                budget: &FixedBudget,
             };
             let error = llm.chat("model", "system", "user").unwrap_err();
             assert_eq!(error, expected);
-            assert_eq!(http.timeout_ms.get(), 28_000);
+            assert_eq!(http.timeout_ms.get(), 20_000);
             assert!(!error.contains("never-print-this-key"));
             assert!(!error.contains("quota response"));
             assert!(!error.contains("server response"));
@@ -281,10 +323,44 @@ mod tests {
         let llm = NearAi {
             http: &http,
             env: &env,
+            budget: &FixedBudget,
         };
         assert_eq!(
             llm.chat("model", "system", "user").unwrap_err(),
             "secret_missing"
+        );
+        assert_eq!(http.timeout_ms.get(), 0);
+    }
+
+    #[test]
+    fn near_ai_caps_timeout_to_remaining_run_budget() {
+        let http = TestHttp {
+            result: Err(HttpError::Timeout),
+            timeout_ms: Cell::new(0),
+        };
+        let env = TestEnv { key: true };
+        let budget = LimitedBudget(Duration::from_secs(15));
+        let llm = NearAi {
+            http: &http,
+            env: &env,
+            budget: &budget,
+        };
+        assert_eq!(
+            llm.chat("model", "system", "user"),
+            Err("llm_timeout".into())
+        );
+        assert_eq!(http.timeout_ms.get(), 10_000);
+
+        let budget = LimitedBudget(Duration::from_secs(2));
+        let llm = NearAi {
+            http: &http,
+            env: &env,
+            budget: &budget,
+        };
+        http.timeout_ms.set(0);
+        assert_eq!(
+            llm.chat("model", "system", "user"),
+            Err("budget_exhausted".into())
         );
         assert_eq!(http.timeout_ms.get(), 0);
     }

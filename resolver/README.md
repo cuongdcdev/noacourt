@@ -20,7 +20,9 @@ Verdict fields, in order: `v`, `resolver_version`, `spec_hash`, `mode`, `status`
 
 In resolve mode, a candle must be closed before its value can decide an outcome. An in-progress candle reports `candle_not_closed` and follows the retry policy. Undated `web_text` and `http_json` string evidence fetched within `observation.max_delay` is dated at the earlier of fetch time and `text_judge.window.to`; this represents the first fetch after the observation time. Simulate mode dates it at the current time. When no evidence is in the window, `jurors` is `null` because no model was called.
 
-NEAR AI juror requests have a 28 second HTTP timeout. A juror retries once after `llm_timeout`, `llm_transport`, `llm_http_429`, an HTTP 5xx response, or `empty_response`, provided a full request still fits inside the panel's 120 second wall-clock budget. The budget reserves the 28 second request timeout and uses the resolver's WASI clock, independently of `context.now`. Juror `invalid_reason` retains these error codes; `bad_json` means the model returned content that was not valid juror JSON.
+The resolver has a 90 second run-wide monotonic budget, independent of `context.now`. Every source and NEAR AI HTTP call is capped by the smaller of its normal timeout and the remaining budget minus a five second safety margin. Source calls normally allow 20 seconds; juror calls also allow 20 seconds and use `max_tokens: 1000`. The WASI client polls a monotonic timer while waiting for response headers and body data, even if the HTTP host ignores its own timeout settings.
+
+A juror call starts only with at least 22 seconds left. A juror retries once after `llm_timeout`, `llm_transport`, `llm_http_429`, an HTTP 5xx response, or `empty_response`, and only with at least 25 seconds left. Jurors skipped because of the budget have `invalid_reason: "budget_exhausted"`; the inconclusive Verdict reason begins `juror_budget_exhausted`. Juror `invalid_reason` otherwise retains the LLM error code; `bad_json` means the model returned content that was not valid juror JSON.
 
 ## Build and run
 
@@ -55,5 +57,7 @@ The build script uses Rust 1.96.0 and `--locked`. It remaps repository, Cargo re
 | `extract_missing`, `extract_not_unique`, `type_mismatch` | JSONPath extraction or type failure. |
 | `sanity_failed`, `secret_missing` | Sanity bound or configured secret missing. |
 | `rpc_disagree`, `candle_not_found`, `candle_not_closed` | NEAR RPC disagreement, no exact candle, or an exact candle that is still in progress. |
+| `budget_exhausted` | Run-wide budget left too little time to start a source or juror HTTP call. |
+| `juror_budget_exhausted` | Verdict reason prefix when the budget prevents a complete juror panel. |
 
 See [examples](examples/README.md) for the saved inputs and output commands.

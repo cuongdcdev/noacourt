@@ -1,13 +1,9 @@
 use crate::{format_time, get_str, parse_time, Deps, EvidenceItem, JurorResult};
 use serde_json::{json, Value};
-use time::{Duration, OffsetDateTime};
+use std::time::Duration;
 
-const PANEL_BUDGET: Duration = Duration::seconds(120);
-const JUROR_TIMEOUT: Duration = Duration::seconds(28);
-
-fn has_call_budget(started: OffsetDateTime, deps: &Deps<'_>) -> bool {
-    deps.clock.now() - started <= PANEL_BUDGET - JUROR_TIMEOUT
-}
+const JUROR_START_MIN: Duration = Duration::from_secs(22);
+const JUROR_RETRY_MIN: Duration = Duration::from_secs(25);
 
 fn retryable_llm_error(error: &str) -> bool {
     matches!(
@@ -28,7 +24,7 @@ fn safe_llm_error(error: &str) -> String {
             | "llm_http_5xx"
             | "empty_response"
             | "secret_missing"
-            | "panel_budget_exhausted"
+            | "budget_exhausted"
     ) {
         return error.into();
     }
@@ -103,22 +99,30 @@ pub fn panel(
     let models = deps.env.get("COURT_JUROR_MODELS").unwrap_or_else(|| {
         "z-ai/glm-5.3-flash,Qwen/Qwen3.6-35B-A3B-FP8,deepseek/deepseek-v4.1-flash".into()
     });
-    let panel_started = deps.clock.now();
     let mut votes = Vec::new();
+    let mut budget_exhausted = false;
     for model in models.split(',').take(3) {
-        let mut answer = if has_call_budget(panel_started, deps) {
+        let mut answer = if deps.budget.remaining() >= JUROR_START_MIN {
             deps.llm.chat(model.trim(), system, &user)
         } else {
-            Err("panel_budget_exhausted".into())
+            budget_exhausted = true;
+            Err("budget_exhausted".into())
         };
         if answer
             .as_ref()
             .err()
             .is_some_and(|error| retryable_llm_error(error))
-            && has_call_budget(panel_started, deps)
         {
-            answer = deps.llm.chat(model.trim(), system, &user);
+            if deps.budget.remaining() >= JUROR_RETRY_MIN {
+                answer = deps.llm.chat(model.trim(), system, &user);
+            } else {
+                budget_exhausted = true;
+            }
         }
+        budget_exhausted |= answer
+            .as_ref()
+            .err()
+            .is_some_and(|error| error == "budget_exhausted");
         let parsed = answer.as_ref().ok().and_then(|text| {
             let clean = text
                 .trim()
@@ -229,7 +233,12 @@ pub fn panel(
             })
             .collect::<Vec<_>>()
             .join("/");
-        format!("panel inconclusive: {valid} valid, answers {answers}")
+        let prefix = if budget_exhausted {
+            "juror_budget_exhausted"
+        } else {
+            "panel inconclusive"
+        };
+        format!("{prefix}: {valid} valid, answers {answers}")
     };
     if injection {
         reason.push_str("; injection phrase flagged");

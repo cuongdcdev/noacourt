@@ -1,11 +1,12 @@
 use court_core::{
-    canon::canonicalize, engine, lint, Clock, Deps, Env, Http, HttpError, HttpRequest,
+    canon::canonicalize, engine, lint, Budget, Clock, Deps, Env, Http, HttpError, HttpRequest,
     HttpResponse, Llm, ResolverInput, TypedValue,
 };
 use rust_decimal::Decimal;
 use serde_json::{json, Value};
 use std::cell::Cell;
 use std::collections::BTreeMap;
+use std::time::Duration as StdDuration;
 use time::OffsetDateTime;
 
 const AT: &str = "2026-11-13T00:13:20Z";
@@ -78,6 +79,11 @@ impl Clock for MockClock {
         court_core::parse_time(AT).unwrap()
     }
 }
+impl Budget for MockClock {
+    fn remaining(&self) -> StdDuration {
+        StdDuration::from_secs(90)
+    }
+}
 struct MockEnv;
 impl Env for MockEnv {
     fn get(&self, _: &str) -> Option<String> {
@@ -147,6 +153,7 @@ fn run_with_env(
     let deps = Deps {
         http,
         clock: &clock,
+        budget: &clock,
         llm,
         env,
     };
@@ -215,6 +222,7 @@ fn text_judge_live_example_is_canonical_and_fixture_parses() {
     let deps = Deps {
         http: &http,
         clock: &clock,
+        budget: &clock,
         llm: &llm,
         env: &env,
     };
@@ -338,6 +346,7 @@ fn each_candle_adapter_requires_closed_exact_candle() {
     let deps = Deps {
         http: &http,
         clock: &clock,
+        budget: &clock,
         llm: &llm,
         env: &env,
     };
@@ -663,6 +672,7 @@ fn http_json_adapter_rejects_large_decimal_scale_without_panic() {
     let deps = Deps {
         http: &http,
         clock: &clock,
+        budget: &clock,
         llm: &llm,
         env: &env,
     };
@@ -697,6 +707,7 @@ fn near_view_rotates_after_one_rpc_fails_and_two_agree() {
     let deps = Deps {
         http: &http,
         clock: &clock,
+        budget: &clock,
         llm: &llm,
         env: &env,
     };
@@ -716,6 +727,7 @@ fn near_view_disagreeing_rpcs_are_rejected() {
     let deps = Deps {
         http: &http,
         clock: &clock,
+        budget: &clock,
         llm: &llm,
         env: &env,
     };
@@ -752,6 +764,7 @@ fn okx_unconfirmed_row_is_not_a_closed_candle() {
     let deps = Deps {
         http: &http,
         clock: &clock,
+        budget: &clock,
         llm: &llm,
         env: &env,
     };
@@ -797,6 +810,7 @@ fn malformed_candle_rows_are_source_errors_not_panics() {
         let deps = Deps {
             http: &http,
             clock: &clock,
+            budget: &clock,
             llm: &llm,
             env: &env,
         };
@@ -883,6 +897,7 @@ fn hostile_specs_and_responses_never_panic_or_resolve() {
     let deps = Deps {
         http: &http,
         clock: &clock,
+        budget: &clock,
         llm: &llm,
         env: &env,
     };
@@ -908,6 +923,7 @@ fn hostile_specs_and_responses_never_panic_or_resolve() {
         let deps = Deps {
             http: &http,
             clock: &clock,
+            budget: &clock,
             llm: &llm,
             env: &env,
         };
@@ -1009,6 +1025,28 @@ impl Clock for PanelClock {
         court_core::parse_time(AT).unwrap() + time::Duration::seconds(self.elapsed_seconds.get())
     }
 }
+impl Budget for PanelClock {
+    fn remaining(&self) -> StdDuration {
+        let elapsed = self.elapsed_seconds.get().max(0) as u64;
+        StdDuration::from_secs(90).saturating_sub(StdDuration::from_secs(elapsed))
+    }
+}
+
+#[test]
+fn run_budget_timeout_reserves_five_seconds() {
+    let clock = PanelClock {
+        elapsed_seconds: Cell::new(80),
+    };
+    assert_eq!(
+        court_core::call_timeout(&clock, StdDuration::from_secs(20)),
+        Some(StdDuration::from_secs(5))
+    );
+    clock.elapsed_seconds.set(88);
+    assert_eq!(
+        court_core::call_timeout(&clock, StdDuration::from_secs(20)),
+        None
+    );
+}
 
 struct ScriptedLlm<'a> {
     replies: Vec<Result<String, String>>,
@@ -1035,8 +1073,16 @@ fn panel_with_script(
     replies: Vec<Result<String, String>>,
     elapsed_per_call: Vec<i64>,
 ) -> (Option<String>, Vec<court_core::JurorResult>, usize) {
+    panel_with_script_at(0, replies, elapsed_per_call)
+}
+
+fn panel_with_script_at(
+    initial_elapsed: i64,
+    replies: Vec<Result<String, String>>,
+    elapsed_per_call: Vec<i64>,
+) -> (Option<String>, Vec<court_core::JurorResult>, usize) {
     let clock = PanelClock {
-        elapsed_seconds: Cell::new(0),
+        elapsed_seconds: Cell::new(initial_elapsed),
     };
     let llm = ScriptedLlm {
         replies,
@@ -1049,6 +1095,7 @@ fn panel_with_script(
     let deps = Deps {
         http: &http,
         clock: &clock,
+        budget: &clock,
         llm: &llm,
         env: &env,
     };
@@ -1060,6 +1107,170 @@ fn panel_with_script(
     }];
     let (result, votes, _) = court_core::judge::panel(&spec["decide"], &items, &deps);
     (result, votes, llm.calls.get())
+}
+
+fn judge_with_budget(
+    initial_elapsed: i64,
+    replies: Vec<Result<String, String>>,
+    elapsed_per_call: Vec<i64>,
+) -> (court_core::Verdict, usize) {
+    let clock = PanelClock {
+        elapsed_seconds: Cell::new(initial_elapsed),
+    };
+    let llm = ScriptedLlm {
+        replies,
+        elapsed_per_call,
+        calls: Cell::new(0),
+        clock: &clock,
+    };
+    let (http, _) = mocks();
+    let env = MockEnv;
+    let deps = Deps {
+        http: &http,
+        clock: &clock,
+        budget: &clock,
+        llm: &llm,
+        env: &env,
+    };
+    let input = ResolverInput {
+        mode: "resolve".into(),
+        spec_json: judge_spec("2026-11-12T00:00:00Z", "2026-11-14T00:00:00Z").to_string(),
+        context: court_core::InputContext {
+            request_id: None,
+            attempt: 1,
+            now: Some(AT.into()),
+        },
+    };
+    let verdict = engine::run(&input, &deps);
+    (verdict, llm.calls.get())
+}
+
+#[test]
+fn nearly_exhausted_budget_skips_all_jurors_and_retries() {
+    let (verdict, calls) = judge_with_budget(69, Vec::new(), Vec::new());
+    assert_eq!(calls, 0);
+    assert_eq!(verdict.status, "retry_after");
+    assert!(verdict.reason.starts_with("juror_budget_exhausted"));
+    assert!(verdict.jurors.as_ref().is_some_and(|votes| votes
+        .iter()
+        .all(|vote| { vote.invalid_reason.as_deref() == Some("budget_exhausted") })));
+}
+
+#[test]
+fn slow_first_juror_skips_retry_and_remaining_jurors() {
+    let (verdict, calls) = judge_with_budget(35, vec![Err("llm_timeout".into())], vec![50]);
+    assert_eq!(calls, 1);
+    assert_eq!(verdict.status, "retry_after");
+    assert!(verdict.reason.starts_with("juror_budget_exhausted"));
+    let votes = verdict.jurors.as_ref().unwrap();
+    assert_eq!(votes[0].invalid_reason.as_deref(), Some("llm_timeout"));
+    assert_eq!(votes[1].invalid_reason.as_deref(), Some("budget_exhausted"));
+    assert_eq!(votes[2].invalid_reason.as_deref(), Some("budget_exhausted"));
+}
+
+#[test]
+fn juror_timeout_is_not_retried_with_less_than_25_seconds_left() {
+    let valid = vote("yes", "Project launched successfully.", 0.9);
+    let (verdict, calls) = judge_with_budget(
+        50,
+        vec![Err("llm_timeout".into()), Ok(valid.clone()), Ok(valid)],
+        vec![16, 0, 0],
+    );
+    assert_eq!(calls, 3);
+    assert_eq!(verdict.status, "retry_after");
+    assert!(verdict.reason.starts_with("juror_budget_exhausted"));
+    assert_eq!(
+        verdict.jurors.as_ref().unwrap()[0]
+            .invalid_reason
+            .as_deref(),
+        Some("llm_timeout")
+    );
+}
+
+#[test]
+fn normal_budget_resolves_three_agreeing_jurors() {
+    let valid = vote("yes", "Project launched successfully.", 0.9);
+    let (verdict, calls) = judge_with_budget(0, vec![Ok(valid); 3], vec![1; 3]);
+    assert_eq!(calls, 3);
+    assert_eq!(verdict.status, "resolved");
+    assert_eq!(verdict.outcome.as_deref(), Some("Yes"));
+}
+
+struct CountHttp<'a> {
+    inner: &'a MockHttp,
+    calls: Cell<usize>,
+    timeout_ms: Cell<u64>,
+}
+impl Http for CountHttp<'_> {
+    fn request(&self, req: &HttpRequest) -> Result<HttpResponse, HttpError> {
+        self.calls.set(self.calls.get() + 1);
+        self.timeout_ms.set(req.timeout_ms);
+        self.inner.request(req)
+    }
+}
+
+#[test]
+fn exhausted_source_budget_does_not_start_http() {
+    let (inner, llm) = mocks();
+    let http = CountHttp {
+        inner: &inner,
+        calls: Cell::new(0),
+        timeout_ms: Cell::new(0),
+    };
+    let clock = PanelClock {
+        elapsed_seconds: Cell::new(88),
+    };
+    let env = MockEnv;
+    let deps = Deps {
+        http: &http,
+        clock: &clock,
+        budget: &clock,
+        llm: &llm,
+        env: &env,
+    };
+    let input = ResolverInput {
+        mode: "resolve".into(),
+        spec_json: spec().to_string(),
+        context: court_core::InputContext {
+            request_id: None,
+            attempt: 1,
+            now: Some(AT.into()),
+        },
+    };
+    let verdict = engine::run(&input, &deps);
+    assert_eq!(http.calls.get(), 0);
+    assert_eq!(
+        verdict.sources[0].error.as_deref(),
+        Some("budget_exhausted")
+    );
+    assert_eq!(verdict.status, "retry_after");
+}
+
+#[test]
+fn source_http_timeout_is_capped_by_remaining_run_budget() {
+    let (inner, llm) = mocks();
+    let http = CountHttp {
+        inner: &inner,
+        calls: Cell::new(0),
+        timeout_ms: Cell::new(0),
+    };
+    let clock = PanelClock {
+        elapsed_seconds: Cell::new(80),
+    };
+    let env = MockEnv;
+    let deps = Deps {
+        http: &http,
+        clock: &clock,
+        budget: &clock,
+        llm: &llm,
+        env: &env,
+    };
+    let source = spec()["sources"][0].clone();
+    let at = court_core::parse_time(AT).unwrap();
+    let result = court_core::tools::fetch(&source, at, at, true, None, &deps);
+    assert!(result.ok);
+    assert_eq!(http.calls.get(), 1);
+    assert_eq!(http.timeout_ms.get(), 5_000);
 }
 
 #[test]
@@ -1130,28 +1341,27 @@ fn juror_llm_error_code_surfaces_and_bad_json_is_content_only() {
 }
 
 #[test]
-fn juror_panel_budget_exhausted_skips_retry() {
+fn juror_budget_exhausted_skips_retry_and_remaining_jurors() {
     let (result, votes, calls) = panel_with_script(vec![Err("llm_timeout".into())], vec![100]);
     assert!(result.is_none());
     assert_eq!(calls, 1);
     assert_eq!(votes[0].invalid_reason.as_deref(), Some("llm_timeout"));
-    assert_eq!(
-        votes[1].invalid_reason.as_deref(),
-        Some("panel_budget_exhausted")
-    );
+    assert_eq!(votes[1].invalid_reason.as_deref(), Some("budget_exhausted"));
+    assert_eq!(votes[2].invalid_reason.as_deref(), Some("budget_exhausted"));
 }
 
 #[test]
-fn juror_retry_is_allowed_when_it_exactly_fits_panel_budget() {
+fn juror_retry_is_allowed_when_25_seconds_remain() {
     let valid = vote("yes", "Project launched successfully.", 0.9);
-    let (result, votes, calls) = panel_with_script(
+    let (result, votes, calls) = panel_with_script_at(
+        65,
         vec![
             Err("llm_timeout".into()),
             Ok(valid.clone()),
             Ok(valid.clone()),
             Ok(valid),
         ],
-        vec![92, 0, 0, 0],
+        vec![0, 0, 0, 0],
     );
     assert_eq!(calls, 4);
     assert_eq!(result.as_deref(), Some("yes"));
@@ -1166,6 +1376,7 @@ fn recorded_adapters_coinbase_coingecko_near_github_http_json() {
     let deps = Deps {
         http: &http,
         clock: &clock,
+        budget: &clock,
         llm: &llm,
         env: &env,
     };
@@ -1216,6 +1427,7 @@ fn recorded_adapters_rss_atom_web_text() {
     let deps = Deps {
         http: &http,
         clock: &clock,
+        budget: &clock,
         llm: &llm,
         env: &env,
     };

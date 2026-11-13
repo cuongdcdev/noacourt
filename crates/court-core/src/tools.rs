@@ -1,6 +1,6 @@
 use crate::{
-    decimal, duration, evidence_hash, format_time, get_str, parse_time, Deps, EvidenceItem,
-    HttpError, HttpRequest, HttpResponse, SourceResult, TypedValue,
+    call_timeout, decimal, duration, evidence_hash, format_time, get_str, parse_time, Deps,
+    EvidenceItem, HttpError, HttpRequest, HttpResponse, SourceResult, TypedValue,
 };
 use quick_xml::events::Event;
 use quick_xml::Reader;
@@ -8,6 +8,7 @@ use rust_decimal::Decimal;
 use serde_json::{json, Value};
 use serde_json_path::JsonPath;
 use std::collections::BTreeMap;
+use std::time::Duration as StdDuration;
 use time::{format_description::well_known::Rfc2822, Duration, OffsetDateTime};
 
 const JSON_CAP: usize = 2 * 1024 * 1024;
@@ -21,6 +22,8 @@ fn request(
     body: Vec<u8>,
     cap: usize,
 ) -> Result<HttpResponse, String> {
+    let timeout = call_timeout(deps.budget, StdDuration::from_secs(20))
+        .ok_or_else(|| "budget_exhausted".to_string())?;
     let insecure = deps.env.get("COURT_ALLOW_INSECURE_LOCALHOST").as_deref() == Some("1")
         && (url.starts_with("http://127.0.0.1:") || url.starts_with("http://localhost:"));
     if !url.starts_with("https://") && !insecure {
@@ -31,7 +34,7 @@ fn request(
         url: url.into(),
         headers,
         body,
-        timeout_ms: 20_000,
+        timeout_ms: timeout.as_millis().max(1).min(u64::MAX as u128) as u64,
     };
     let response = deps.http.request(&req).map_err(|e| match e {
         HttpError::Timeout => "http_timeout",
@@ -225,6 +228,9 @@ pub fn fetch(
     deps: &Deps<'_>,
 ) -> SourceResult {
     let id = source["id"].as_str().unwrap_or("");
+    if call_timeout(deps.budget, StdDuration::from_secs(20)).is_none() {
+        return SourceResult::error(id, "budget_exhausted", None);
+    }
     let tool = source["tool"].as_str().unwrap_or("");
     let target = if simulate { now } else { at };
     let snapshot = matches!(tool, "github_repo" | "web_text" | "coingecko_price")
@@ -725,7 +731,13 @@ fn near_view(source: &Value, at: OffsetDateTime, deps: &Deps<'_>) -> SourceResul
         headers.insert("Content-Type".into(), "application/json".into());
         for _ in 0..3 {
             let response = request(deps, "POST", url, headers.clone(), body.clone(), JSON_CAP);
-            let Ok(response) = response else { continue };
+            let response = match response {
+                Ok(response) => response,
+                Err(error) if error == "budget_exhausted" => {
+                    return SourceResult::error(id, "budget_exhausted", Some(url.clone()));
+                }
+                Err(_) => continue,
+            };
             let Ok(root) = json_response(&response) else {
                 continue;
             };
