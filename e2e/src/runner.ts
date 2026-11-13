@@ -10,6 +10,7 @@ import { linkRejectionReason } from "../../apps/mcp/src/court/client.js";
 import { AccountMutex } from "./accountMutex.js";
 import {
   evaluateVoid,
+  hasUnresolvableHistory,
   marketTooLate,
   shouldSkipFallback,
   specTimingDecision,
@@ -22,6 +23,7 @@ import {
   UA,
   isFailure,
   isText,
+  parseDurationMinutes,
   parseScenarioTarget,
   type Scenario,
 } from "./constants.js";
@@ -145,7 +147,7 @@ async function waitInternalCredit(
   );
 }
 
-function prepare(scenario: Scenario): RunState {
+function prepare(scenario: Scenario, durationOverride?: number): RunState {
   const now = new Date();
   const file = resolve(
     results,
@@ -159,11 +161,15 @@ function prepare(scenario: Scenario): RunState {
     spec: {},
     specJson: "",
     specHash: "",
-    durationMinutes: isFailure(scenario) ? 8 : 10,
+    durationMinutes: durationOverride ?? (isFailure(scenario) ? 8 : 10),
     resolutionWindowMinutes: isFailure(scenario) ? 20 : 15,
     txs: {},
     keeper: {},
     fallbacks: [],
+    notes:
+      durationOverride === undefined
+        ? []
+        : [`duration override: ${durationOverride}m`],
     events: [],
   };
 }
@@ -1025,7 +1031,12 @@ async function independent(state: RunState, persist = true): Promise<void> {
       verdictReason: verdict?.reason,
       sourceErrors: (verdict?.sources ?? []).map((source: any) => source.error),
       courtError: state.court?.last_error,
-      sawUnresolvable: state.sawUnresolvable,
+      sawUnresolvable: hasUnresolvableHistory(
+        state.sawUnresolvable,
+        state.events,
+        state.notes,
+      ),
+      retryMaxAttempts: Number(state.spec.retry?.max_attempts),
     });
     state.notes = [
       ...(state.notes ?? []).filter(
@@ -1187,8 +1198,12 @@ async function execute(state: RunState): Promise<void> {
   }
 }
 
-async function runOne(scenario: Scenario, dryRun: boolean): Promise<void> {
-  const state = prepare(scenario);
+async function runOne(
+  scenario: Scenario,
+  dryRun: boolean,
+  durationOverride?: number,
+): Promise<void> {
+  const state = prepare(scenario, durationOverride);
   try {
     if (!dryRun) await save(state);
     if (dryRun) {
@@ -1212,8 +1227,29 @@ async function runOne(scenario: Scenario, dryRun: boolean): Promise<void> {
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
-  const dryRun = args.includes("--dry-run");
-  const target = args.find((arg) => !arg.startsWith("--"));
+  let dryRun = false;
+  let durationOverride: number | undefined;
+  const positional: string[] = [];
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    if (arg === "--dry-run") {
+      dryRun = true;
+    } else if (arg === "--duration") {
+      if (durationOverride !== undefined)
+        throw new Error("--duration may only be specified once");
+      durationOverride = parseDurationMinutes(args[++index] ?? "");
+    } else if (arg.startsWith("--")) {
+      throw new Error(`Unknown option: ${arg}`);
+    } else {
+      positional.push(arg);
+    }
+  }
+  const target = positional[0];
+  if (
+    durationOverride !== undefined &&
+    ["fixtures", "resume", "rerow"].includes(target)
+  )
+    throw new Error("--duration applies only to new scenario runs");
   if (target === "fixtures") {
     if (dryRun)
       throw new Error(
@@ -1226,7 +1262,7 @@ async function main(): Promise<void> {
     return;
   }
   if (target === "resume") {
-    const file = args.find((arg) => arg.endsWith(".json"));
+    const file = positional[1];
     if (!file) throw new Error("Usage: pnpm e2e resume <results-file>");
     const state = await load(file);
     try {
@@ -1240,7 +1276,7 @@ async function main(): Promise<void> {
     return;
   }
   if (target === "rerow") {
-    const file = args.find((arg) => arg.endsWith(".json"));
+    const file = positional[1];
     if (!file) throw new Error("Usage: pnpm e2e rerow <results-file>");
     const state = await load(file);
     await snapshot(state, false);
@@ -1260,7 +1296,7 @@ async function main(): Promise<void> {
   const settled = await Promise.allSettled(
     scenarios.map(async (scenario, index) => {
       if (!dryRun) await sleep(index * 5_000);
-      return runOne(scenario, dryRun);
+      return runOne(scenario, dryRun, durationOverride);
     }),
   );
   if (settled.some((item) => item.status === "rejected")) process.exitCode = 1;

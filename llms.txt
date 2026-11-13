@@ -26,12 +26,15 @@ Health: https://noacourtmcp.junstudio.xyz/healthz
 ## Live evidence
 
 - [A1 NEAR/USDT market 67](https://testnet.nearblocks.io/txns/GtfMBy2GmCKKNLjBGbNm7Wppf3VTnZ8ydB92bMrBsDWs): resolved No on attempt 2; `tee: true`, submitted by OutLayer. Query Court `get_verdict({"id":"noa:67"})` for the stored receipt.
+- [A8 RSS text-judge market 79](https://testnet.nearblocks.io/txns/7JnWtdYRhPK5muTsUMC27Bg8nyhd8zBFNsTXhFGR28DL): 15-minute market with [Yes](https://testnet.nearblocks.io/txns/7tNvi2wiReAeSjpUnRemSc1pHhqCzsjmHQqwBjr9toUj) and [No](https://testnet.nearblocks.io/txns/2WKsnVpmNtyc2Rwd1sturW1HCntjTshMHEnhWRuVqaKP) bets; three jurors agreed on Yes in the TEE, `tee: true`; [finalized](https://testnet.nearblocks.io/txns/5YESzkVyunsctNaPLPAEypvUonT9NHxfgH8qGyLHbdiL) and [claimed](https://testnet.nearblocks.io/txns/FiUEfZpBLifAVS6r9d3bTfrWWwy1EQsKaniCENHFAkHN). Query `get_verdict({"id":"noa:79"})`.
 - [A2–A4 markets 68–70](https://github.com/cuongdcdev/noacourt/blob/main/E2E_RESULTS.md): Flat, Up, and Yes respectively; all `tee: true`.
 - [A6 market 76](https://testnet.nearblocks.io/txns/BVuv2dZF6pWSLmY5JFYsSZ11rNdzCJ7wkEfoPQiLHm1A) and [A7 market 77](https://testnet.nearblocks.io/txns/3NbFB8K2giB7yxxFyfUCcunjNWd2Etfw2kvn2xzPYREW): identity assertion failure and deleted source, respectively; both unresolvable and voided.
 - [A8 market 73](https://testnet.nearblocks.io/txns/HMUwVHVvegxTKANcMiGvToiynC32BdRid28q9A1skBNt), [A8n market 74](https://testnet.nearblocks.io/txns/6vNnXRHexjnu1W699kqsLiSUnYgoDWuYiN9MFgnmTdFB), and [A9 market 75](https://testnet.nearblocks.io/txns/D4zeVBo7kT8nTmtftaqf4HdFFK8NQZorLxJXQEyjDZYw): text evidence resolved Yes, No, and No respectively.
 - [Generic `req:1`](https://testnet.nearblocks.io/txns/EwTtoX8cAJBDUZWJrYnKchPdbnkQa8dnNJCuxnoXwPrZ): request followed by [keeper trigger](https://testnet.nearblocks.io/txns/2FjTEHWCp6Um7Ro8NSgqGd4ukjz7i2qWAEsxJ1dtP9GA); resolved Yes, value `3.401`, attempt 2, `tee: true`.
 
 The first-wave verdicts have `tee: true` and `submitted_by: "outlayer"`. A6–A9 fixtures are served at `https://noacourtmcp.junstudio.xyz/fixtures/<name>` and labelled `self_declared`; this host is not in the verified-source list.
+
+One A8 rerun, [market 78](https://testnet.nearblocks.io/txns/9uRxS8JUQHuK9a4L9foWgYySgsHSX3nurkToArzkUgsx), had two OutLayer execution failures returning null. Court rejected them and the market was voided without a wrong outcome; the failure is under investigation.
 
 ## Agent instructions
 

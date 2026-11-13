@@ -39,7 +39,7 @@ export function buildSpec(input: SpecInput): Record<string, any> {
   const duration = input.durationMinutes ?? (failure ? 8 : 10);
   const at = observationTime(
     now,
-    scenario === "A2" || scenario === "A3" ? 13 : duration,
+    scenario === "A2" || scenario === "A3" ? duration + 3 : duration,
   );
   const baseline = new Date(Math.floor(now.getTime() / 60_000) * 60_000)
     .toISOString()

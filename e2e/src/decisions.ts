@@ -31,6 +31,18 @@ export function shouldSkipFallback(status: string, action: string): boolean {
   );
 }
 
+export function hasUnresolvableHistory(
+  sawUnresolvable: boolean | undefined,
+  events: { message: string }[],
+  notes: string[] = [],
+): boolean {
+  return Boolean(
+    sawUnresolvable ||
+    events.some((event) => /\bunresolvable\b/i.test(event.message)) ||
+    notes.some((note) => /\bunresolvable\b/i.test(note)),
+  );
+}
+
 export function evaluateVoid(input: {
   noaStatus?: string;
   courtStatus: string;
@@ -42,9 +54,18 @@ export function evaluateVoid(input: {
   sourceErrors?: unknown[];
   courtError?: string;
   sawUnresolvable?: boolean;
+  retryMaxAttempts?: number;
 }): { pass: boolean; path: string; note: string; summary: string } {
-  const path = input.sawUnresolvable
-    ? "unresolvable->void"
+  const retryExhausted =
+    Number.isInteger(input.retryMaxAttempts) &&
+    input.retryMaxAttempts! > 0 &&
+    input.attempts >= input.retryMaxAttempts!;
+  const unresolvable =
+    input.sawUnresolvable ||
+    input.verdictStatus?.toLowerCase() === "unresolvable" ||
+    retryExhausted;
+  const path = unresolvable
+    ? `unresolvable->void after ${input.attempts} attempts`
     : `deadline void after ${input.attempts} attempts`;
   const errors = [
     ...new Set(

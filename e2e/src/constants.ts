@@ -27,6 +27,15 @@ export const SCENARIOS = [
   "A9",
 ] as const;
 export type Scenario = (typeof SCENARIOS)[number];
+export function parseDurationMinutes(value: string): number {
+  if (
+    !/^\d+$/.test(value) ||
+    !Number.isSafeInteger(Number(value)) ||
+    Number(value) < 5
+  )
+    throw new Error("--duration requires an integer of at least 5 minutes");
+  return Number(value);
+}
 export function parseScenarioTarget(target: string | undefined): Scenario[] {
   if (target === "all" || target === "wave1") return [...SCENARIOS];
   const names = target?.split(",").map((name) => name.trim()) ?? [];

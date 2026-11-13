@@ -6,7 +6,7 @@ Noa Court lets a market creator lock a resolution rule into a canonical JSON spe
 
 1. Open [service health](https://noacourtmcp.junstudio.xyz/healthz) → see the MCP service status.
 2. Add `https://noacourtmcp.junstudio.xyz/mcp` to Claude Code with `claude mcp add --transport http noacourt https://noacourtmcp.junstudio.xyz/mcp`; prompt: “Use court_guide, sample NEAR/USDT from Binance and OKX, draft and simulate a future two-outcome Court market, then show the rules and a wallet sign link.” → see a preflight verdict and `/sign/<id>` URL. The wallet signs only after you review the plan.
-3. Open the resolved testnet market receipt <!-- E2E:A1 -->[market 67](https://testnet.nearblocks.io/txns/GtfMBy2GmCKKNLjBGbNm7Wppf3VTnZ8ydB92bMrBsDWs)<!-- /E2E:A1 --> and <!-- E2E:A1_TX -->[resolution transaction](https://testnet.nearblocks.io/txns/GtfMBy2GmCKKNLjBGbNm7Wppf3VTnZ8ydB92bMrBsDWs)<!-- /E2E:A1_TX --> on NearBlocks → see the OutLayer verdict and Noa `resolve_market` in the transaction's receipts. Query the stored Court verdict with the command below to see its source evidence and `tee` flag.
+3. Open the A1 price-market receipt <!-- E2E:A1 -->[market 67](https://testnet.nearblocks.io/txns/GtfMBy2GmCKKNLjBGbNm7Wppf3VTnZ8ydB92bMrBsDWs)<!-- /E2E:A1 --> and <!-- E2E:A1_TX -->[resolution transaction](https://testnet.nearblocks.io/txns/GtfMBy2GmCKKNLjBGbNm7Wppf3VTnZ8ydB92bMrBsDWs)<!-- /E2E:A1_TX -->, then the A8 text-judge [market 79 resolution](https://testnet.nearblocks.io/txns/7JnWtdYRhPK5muTsUMC27Bg8nyhd8zBFNsTXhFGR28DL) on NearBlocks → see OutLayer verdicts and Noa `resolve_market` in the transaction receipts. Query the stored Court verdicts below to see their evidence and `tee` flags.
 4. Read [E2E results](E2E_RESULTS.md) → inspect scenario outcomes, transaction hashes, and independent checks.
 5. Follow [integration steps](docs/INTEGRATE.md) → request a generic verdict or create a Noa market.
 
@@ -14,6 +14,7 @@ Live market ID: <!-- E2E:A1_ID -->67<!-- /E2E:A1_ID -->.
 
 ```sh
 near contract call-function as-read-only ai-resolver.noamarket.testnet get_verdict json-args '{"id":"noa:67"}' network-config testnet now
+near contract call-function as-read-only ai-resolver.noamarket.testnet get_verdict json-args '{"id":"noa:79"}' network-config testnet now
 ```
 
 ## Live evidence
@@ -21,12 +22,14 @@ near contract call-function as-read-only ai-resolver.noamarket.testnet get_verdi
 All first-wave scenarios in [E2E_RESULTS.md](E2E_RESULTS.md) passed. Their Court verdicts have `tee: true` and `submitted_by: "outlayer"`:
 
 - [A1, market 67](E2E_RESULTS.md): NEAR/USDT threshold → No. The first attempt retried because the candle had not closed; the [second trigger](https://testnet.nearblocks.io/txns/GtfMBy2GmCKKNLjBGbNm7Wppf3VTnZ8ydB92bMrBsDWs) resolved it. The [creation](https://testnet.nearblocks.io/txns/EUkohRdRE3mwvSScTe1BUqHfXKVm8CC33aVozMsLVNWF), [keeper link](https://testnet.nearblocks.io/txns/BeDq3T2vXBRx9MXZ4RnXN2gcXzgwtyDGcNWsRK1gGwoU), [first trigger](https://testnet.nearblocks.io/txns/F9Vnr7LReUPce96ANZMqZQboYkR3jJGwvqvRkbWWPN1m), [finalization](https://testnet.nearblocks.io/txns/6kWLDoBw8prE6FS8Beb4gQKSzoiwL8dbSh2W4HpNypsL), and [claim](https://testnet.nearblocks.io/txns/92W5cP3cF7uzwKVZ21QS1yJqLW3EZR2ajfdUypPugmEn) are also recorded.
+- A8, market 79: a 15-minute RSS `text_judge` market with real opposing bets—user2 [bet Yes](https://testnet.nearblocks.io/txns/7tNvi2wiReAeSjpUnRemSc1pHhqCzsjmHQqwBjr9toUj), user4 [bet No](https://testnet.nearblocks.io/txns/2WKsnVpmNtyc2Rwd1sturW1HCntjTshMHEnhWRuVqaKP). Three NEAR AI jurors agreed on Yes inside the TEE; the [trigger transaction](https://testnet.nearblocks.io/txns/7JnWtdYRhPK5muTsUMC27Bg8nyhd8zBFNsTXhFGR28DL) contains the OutLayer verdict and Noa resolution (`tee: true`). The proposal was [finalized](https://testnet.nearblocks.io/txns/5YESzkVyunsctNaPLPAEypvUonT9NHxfgH8qGyLHbdiL), and the winner [claimed](https://testnet.nearblocks.io/txns/FiUEfZpBLifAVS6r9d3bTfrWWwy1EQsKaniCENHFAkHN).
 - [A2, market 68](E2E_RESULTS.md): BTC price buckets → Flat.
 - [A3, market 69](E2E_RESULTS.md): BTC price change → Up.
 - [A4, market 70](E2E_RESULTS.md): NPOINT `ft_balance_of` through `near_view` → Yes.
 - A6, market 76: a changed JSON identity failed its assertion on all three attempts (`assert_failed`); the market never resolved, became `Unresolvable`, and was [voided](https://testnet.nearblocks.io/txns/BVuv2dZF6pWSLmY5JFYsSZ11rNdzCJ7wkEfoPQiLHm1A). Bettors were refunded.
 - A7, market 77: the deleted source returned `http_4xx` on all three attempts; the market became `Unresolvable` and was [voided](https://testnet.nearblocks.io/txns/3NbFB8K2giB7yxxFyfUCcunjNWd2Etfw2kvn2xzPYREW).
 - A8, market 73: an in-window RSS post resolved Yes after three agreeing NEAR AI jurors inside the TEE; [trigger and resolution](https://testnet.nearblocks.io/txns/HMUwVHVvegxTKANcMiGvToiynC32BdRid28q9A1skBNt).
+- A8 rerun, market 78: OutLayer execution failed twice and returned null. Court rejected the null, and the market was [voided](https://testnet.nearblocks.io/txns/9uRxS8JUQHuK9a4L9foWgYySgsHSX3nurkToArzkUgsx) without a wrong outcome. The failure is under investigation.
 - A8n, market 74: no in-window post resolved No through `default_if_no_evidence`, without calling jurors; [trigger and resolution](https://testnet.nearblocks.io/txns/6vNnXRHexjnu1W699kqsLiSUnYgoDWuYiN9MFgnmTdFB).
 - A9, market 75: a prompt-injection-only post resolved No after three agreeing jurors; the injection phrase was flagged; [trigger and resolution](https://testnet.nearblocks.io/txns/D4zeVBo7kT8nTmtftaqf4HdFFK8NQZorLxJXQEyjDZYw).
 - [Generic request `req:1`](docs/INTEGRATE.md#verified-on-testnet): [`request_resolution` transaction](https://testnet.nearblocks.io/txns/EwTtoX8cAJBDUZWJrYnKchPdbnkQa8dnNJCuxnoXwPrZ) and [keeper trigger](https://testnet.nearblocks.io/txns/2FjTEHWCp6Um7Ro8NSgqGd4ukjz7i2qWAEsxJ1dtP9GA); final verdict Yes, value `3.401`, attempt 2, `tee: true`.

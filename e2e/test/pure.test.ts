@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { AccountMutex } from "../src/accountMutex.js";
-import { SCENARIOS, parseScenarioTarget } from "../src/constants.js";
+import {
+  SCENARIOS,
+  parseDurationMinutes,
+  parseScenarioTarget,
+} from "../src/constants.js";
 import {
   evaluateVoid,
+  hasUnresolvableHistory,
   marketTooLate,
   shouldSkipFallback,
   specTimingDecision,
@@ -72,6 +77,23 @@ test("creator lock wait rebuilds an unregistered spec and preserves registered s
   assert.ok(Date.parse(rebuilt.observation.at) >= afterLockWait + 11 * 60_000);
 });
 
+test("duration override requires whole minutes and shifts observation", () => {
+  assert.equal(parseDurationMinutes("12"), 12);
+  for (const value of ["", "4", "5.5", "-5", "Infinity"])
+    assert.throws(() => parseDurationMinutes(value), /integer of at least 5/);
+  const base = buildSpec({ scenario: "A2", now, price: "100" });
+  const longer = buildSpec({
+    scenario: "A2",
+    now,
+    price: "100",
+    durationMinutes: 20,
+  });
+  assert.equal(
+    Date.parse(longer.observation.at) - Date.parse(base.observation.at),
+    10 * 60_000,
+  );
+});
+
 test("fresh Court status suppresses stale trigger fallbacks", () => {
   for (const status of ["pending", "resolved", "unresolvable", "voided"])
     assert.equal(shouldSkipFallback(status, "trigger"), true);
@@ -112,7 +134,23 @@ test("void proof accepts deadline void after fewer than three attempts", () => {
   );
   assert.equal(
     evaluateVoid({ ...evidence, sawUnresolvable: true }).path,
-    "unresolvable->void",
+    "unresolvable->void after 2 attempts",
+  );
+  assert.equal(
+    evaluateVoid({ ...evidence, verdictStatus: "unresolvable" }).path,
+    "unresolvable->void after 2 attempts",
+  );
+  assert.equal(
+    evaluateVoid({ ...evidence, retryMaxAttempts: 2 }).path,
+    "unresolvable->void after 2 attempts",
+  );
+  assert.equal(
+    evaluateVoid({ ...evidence, retryMaxAttempts: 3 }).path,
+    "deadline void after 2 attempts",
+  );
+  assert.equal(
+    hasUnresolvableHistory(false, [{ message: "Court status Unresolvable" }]),
+    true,
   );
   assert.equal(
     evaluateVoid({ ...evidence, resolveReceiptCount: 1 }).pass,
