@@ -8,6 +8,7 @@ import {
 } from "../src/constants.js";
 import {
   evaluateVoid,
+  evaluateNegw,
   hasUnresolvableHistory,
   marketTooLate,
   shouldSkipFallback,
@@ -40,8 +41,45 @@ import {
   retireFailedCreate,
   retryDecision,
 } from "../src/sign.js";
+import { resolutionWindowMinutes } from "../src/window.js";
 
 const now = new Date("2026-11-12T19:00:05Z");
+
+test("resolution window covers retry horizon and observation gap", () => {
+  const spec = {
+    observation: { at: "2026-11-12T19:13:00Z" },
+    retry: { max_attempts: 3, every: "3m" },
+  };
+  assert.equal(resolutionWindowMinutes(spec, 15, 10, 3, now.getTime()), 18);
+  assert.equal(resolutionWindowMinutes(spec, 25, 10, 3, now.getTime()), 25);
+  const failure = {
+    observation: { at: "2026-11-12T19:11:00Z" },
+    retry: { max_attempts: 3, every: "2m" },
+  };
+  assert.equal(resolutionWindowMinutes(failure, 20, 8, 3, now.getTime()), 20);
+});
+
+test("NEGW requires permanent rejection, no repeated links, void and stake return", () => {
+  const evidence = {
+    reason: "resolution window too short for retries",
+    permanent: true,
+    linkAttempts: 1,
+    observedForMs: 3 * 60_000,
+    everLinked: false,
+    courtLinked: false,
+    noaStatus: "Void",
+    stakeReturned: true,
+  };
+  assert.equal(evaluateNegw(evidence).pass, true);
+  assert.equal(evaluateNegw({ ...evidence, linkAttempts: 3 }).pass, false);
+  assert.equal(evaluateNegw({ ...evidence, everLinked: true }).pass, false);
+  assert.equal(evaluateNegw({ ...evidence, permanent: false }).pass, false);
+  assert.equal(evaluateNegw({ ...evidence, stakeReturned: false }).pass, false);
+  assert.equal(
+    evaluateNegw({ ...evidence, observedForMs: 179_999 }).pass,
+    false,
+  );
+});
 
 test("creator lock wait rebuilds an unregistered spec and preserves registered specs", () => {
   const queuedAt = new Date("2026-11-12T23:00:08Z");

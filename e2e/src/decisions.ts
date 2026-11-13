@@ -93,3 +93,32 @@ export function evaluateVoid(input: {
     summary: `${path}; no pending=${!input.pendingResolution}; no resolve receipt=${input.resolveReceiptCount === 0}; verdict=${input.verdictStatus ?? "none"}`,
   };
 }
+
+export function evaluateNegw(input: {
+  reason?: string;
+  permanent: boolean;
+  linkAttempts: number;
+  observedForMs: number;
+  everLinked: boolean;
+  courtLinked: boolean;
+  noaStatus?: string;
+  stakeReturned: boolean;
+}): { pass: boolean; summary: string } {
+  const rejected = /resolution window too short for retries/i.test(
+    input.reason ?? "",
+  );
+  const pass =
+    rejected &&
+    input.permanent &&
+    input.linkAttempts > 0 &&
+    input.linkAttempts <= 2 &&
+    input.observedForMs >= 3 * 60_000 &&
+    !input.everLinked &&
+    !input.courtLinked &&
+    input.noaStatus === "Void" &&
+    input.stakeReturned;
+  return {
+    pass,
+    summary: `rejection=${rejected}; permanent=${input.permanent}; link attempts=${input.linkAttempts} over ${Math.floor(input.observedForMs / 1000)}s; never linked=${!input.everLinked}; Noa=${input.noaStatus ?? "unknown"}; creator stake returned=${input.stakeReturned}`,
+  };
+}

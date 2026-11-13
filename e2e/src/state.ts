@@ -39,6 +39,20 @@ export type RunState = {
   events: { at: string; message: string }[];
   court?: any;
   linkRejection?: string;
+  negative?: {
+    firstRejectionAt?: string;
+    reason?: string;
+    linkAttempts?: number;
+    permanent?: boolean;
+    observedForMs?: number;
+    everLinked?: boolean;
+    creatorBalanceAfterCreate?: string;
+    creatorBalanceAfterVoid?: string;
+    creatorResidualZero?: boolean;
+    marketSettledEvent?: boolean;
+    stakeReturned?: boolean;
+    voidedBy?: string;
+  };
   noa?: any;
   pendingResolution?: any;
   verdictRecord?: any;
@@ -96,7 +110,12 @@ export function formatRow(state: RunState): string {
   );
   const resolveLinks = [
     ...new Set([
-      ...hashes(state, ["resolve_market", "retry_forward", "void"]),
+      ...hashes(state, [
+        "resolve_market",
+        "retry_forward",
+        "void",
+        "void_unlinked",
+      ]),
       ...resolveInTrigger,
     ]),
   ]
@@ -121,12 +140,16 @@ export function formatRow(state: RunState): string {
     resolveLinks,
     link(hashes(state, ["finalize_resolution"])),
     link(hashes(state, ["claim_"])),
-    `${verdict?.status ?? state.court?.state ?? ""} / ${outcome ?? ""}`,
-    state.verdictRecord?.tee === true
-      ? "true"
-      : state.verdictRecord?.tee === false
-        ? "false"
-        : "unknown",
+    state.scenario === "NEGW"
+      ? `link rejected / ${state.noa?.status ?? ""}`
+      : `${verdict?.status ?? state.court?.state ?? ""} / ${outcome ?? ""}`,
+    state.scenario === "NEGW"
+      ? "n/a"
+      : state.verdictRecord?.tee === true
+        ? "true"
+        : state.verdictRecord?.tee === false
+          ? "false"
+          : "unknown",
     state.independent?.summary ?? "",
     state.pass === true ? "PASS" : "FAIL",
     [
@@ -231,6 +254,50 @@ export async function collectKeeper(state: RunState): Promise<void> {
   }
 }
 
+export async function keeperLinkEvidence(marketId: number): Promise<{
+  attempts: number;
+  firstRejectionAt?: string;
+  reason?: string;
+  permanent: boolean;
+  voidTx?: string;
+}> {
+  const path = resolve(import.meta.dirname, "../../apps/mcp/data/keeper.log");
+  const lines = (await readFile(path, "utf8")).split("\n");
+  const links: any[] = [];
+  let voidTx: string | undefined;
+  for (const line of lines) {
+    if (!line) continue;
+    try {
+      const entry = JSON.parse(line);
+      if (entry.id !== `noa:${marketId}`) continue;
+      if (entry.action === "link_market") links.push(entry);
+      if (
+        entry.action === "void_unlinked" &&
+        entry.result === "ok" &&
+        entry.tx_hash
+      )
+        voidTx = entry.tx_hash;
+    } catch {
+      // A partial keeper log line may be in progress.
+    }
+  }
+  const rejected = links.find(
+    (entry) =>
+      entry.permanent === true &&
+      entry.result === "rejected" &&
+      /resolution window too short for retries/i.test(
+        `${entry.reason ?? ""} ${entry.error ?? ""}`,
+      ),
+  );
+  return {
+    attempts: links.length,
+    firstRejectionAt: rejected?.ts,
+    reason: rejected?.reason ?? rejected?.error,
+    permanent: Boolean(rejected),
+    voidTx,
+  };
+}
+
 export async function collectNearBlocks(state: RunState): Promise<void> {
   if (state.marketId === undefined) return;
   try {
@@ -241,6 +308,7 @@ export async function collectNearBlocks(state: RunState): Promise<void> {
       "submit_keeper_verdict",
       "retry_forward",
       "void",
+      "void_unlinked",
       "finalize_resolution",
     ]);
     const earliest = Date.parse(state.startedAt) - 5 * 60_000;

@@ -10,6 +10,7 @@ import { linkRejectionReason } from "../../apps/mcp/src/court/client.js";
 import { AccountMutex } from "./accountMutex.js";
 import {
   evaluateVoid,
+  evaluateNegw,
   hasUnresolvableHistory,
   marketTooLate,
   shouldSkipFallback,
@@ -51,6 +52,7 @@ import {
   collectKeeper,
   collectNearBlocks,
   inspectTriggerReceipts,
+  keeperLinkEvidence,
   load,
   note,
   save,
@@ -62,6 +64,8 @@ import {
   canonicalSpec,
   effectiveMarketDurationMinutes,
 } from "./specs.js";
+import { resolutionWindowMinutes } from "./window.js";
+import { requiredResolutionWindowMinutes } from "../../apps/mcp/src/lib.js";
 
 const rpc = new Rpc();
 const sender = new Sender(rpc);
@@ -147,7 +151,11 @@ async function waitInternalCredit(
   );
 }
 
-function prepare(scenario: Scenario, durationOverride?: number): RunState {
+function prepare(
+  scenario: Scenario,
+  durationOverride?: number,
+  tag?: string,
+): RunState {
   const now = new Date();
   const file = resolve(
     results,
@@ -161,15 +169,21 @@ function prepare(scenario: Scenario, durationOverride?: number): RunState {
     spec: {},
     specJson: "",
     specHash: "",
-    durationMinutes: durationOverride ?? (isFailure(scenario) ? 8 : 10),
-    resolutionWindowMinutes: isFailure(scenario) ? 20 : 15,
+    durationMinutes:
+      durationOverride ??
+      (isFailure(scenario) ? 8 : scenario === "NEGW" ? 5 : 10),
+    resolutionWindowMinutes:
+      scenario === "NEGW" ? 10 : isFailure(scenario) ? 20 : 15,
     txs: {},
     keeper: {},
     fallbacks: [],
-    notes:
-      durationOverride === undefined
+    notes: [
+      ...(durationOverride === undefined
         ? []
-        : [`duration override: ${durationOverride}m`],
+        : [`duration override: ${durationOverride}m`]),
+      ...(tag ? [`tag: ${tag}`] : []),
+    ],
+    negative: scenario === "NEGW" ? {} : undefined,
     events: [],
   };
 }
@@ -186,8 +200,9 @@ async function prepareSpec(
       !dryRun && (isFailure(scenario) || isText(scenario))
         ? await createFixture(scenario)
         : undefined;
-    const symbol = scenario === "A1" ? "NEARUSDT" : "BTCUSDT";
-    const price = ["A1", "A2", "A3"].includes(scenario)
+    const symbol =
+      scenario === "A1" || scenario === "NEGW" ? "NEARUSDT" : "BTCUSDT";
+    const price = ["A1", "A2", "A3", "NEGW"].includes(scenario)
       ? await livePrice(symbol)
       : undefined;
     const balanceBefore =
@@ -240,9 +255,22 @@ async function prepareSpec(
 async function plan(
   state: RunState,
   dryRun: boolean,
-): Promise<{ input: BuildInput; transactions: WalletTransaction[] }> {
+): Promise<{
+  input: BuildInput;
+  transactions: WalletTransaction[];
+  courtMaxAttempts: number;
+}> {
   const balance = await accountBalance(USER(1));
   const courtConfig = await view<any>(COURT, "get_config", {});
+  const courtMaxAttempts = Number(courtConfig.max_attempts ?? 3);
+  if (state.scenario !== "NEGW")
+    state.resolutionWindowMinutes = resolutionWindowMinutes(
+      state.spec as { observation: { at: string } },
+      state.resolutionWindowMinutes,
+      state.durationMinutes,
+      courtMaxAttempts,
+      Date.now(),
+    );
   if (courtConfig.resolver_source?.Project?.version_key == null) {
     process.stderr.write(
       `[${state.scenario}] WARNING: Court resolver project has no pinned version_key; pin the deployed resolver before claiming a pinned TEE run.\n`,
@@ -265,8 +293,9 @@ async function plan(
     internal_balance_yocto: balance,
     signer_id: USER(1),
     creator: USER(1),
+    court_max_attempts: courtMaxAttempts,
   };
-  const transactions = buildCreateMarketTxs(input);
+  const transactions = createPlan(input, state.scenario);
   if (dryRun) {
     process.stdout.write(
       `[${state.scenario}] spec_hash=${state.specHash} observation=${state.spec.observation.at} price=${state.price?.value ?? "n/a"}\n`,
@@ -275,7 +304,7 @@ async function plan(
       `[${state.scenario}] create plan: ${JSON.stringify(transactions)}\n`,
     );
   }
-  return { input, transactions };
+  return { input, transactions, courtMaxAttempts };
 }
 
 let spendTail: Promise<unknown> = Promise.resolve();
@@ -382,6 +411,29 @@ function plannedCall(tx: WalletTransaction): Call {
   };
 }
 
+function createPlan(
+  input: BuildInput,
+  scenario: Scenario,
+): WalletTransaction[] {
+  if (scenario !== "NEGW") return buildCreateMarketTxs(input);
+  // NEGW intentionally violates the normal builder's retry-window guard.
+  const required = requiredResolutionWindowMinutes(
+    input.spec_json,
+    input.court_max_attempts,
+  );
+  const transactions = buildCreateMarketTxs({
+    ...input,
+    resolution_window_minutes: required,
+  });
+  const create = transactions.find(
+    (tx) => tx.actions[0].params.methodName === "create_market",
+  );
+  if (!create) throw new Error("NEGW plan has no create_market transaction");
+  create.actions[0].params.args.resolution_window_minutes =
+    input.resolution_window_minutes;
+  return transactions;
+}
+
 async function sendPlan(state: RunState): Promise<void> {
   await accountMutex.run(USER(1), async () => {
     if (state.stage === "prepared") await prepareSpec(state, false);
@@ -442,7 +494,7 @@ async function sendPlanLocked(state: RunState): Promise<boolean> {
     await save(state);
     return true;
   }
-  const { input, transactions } = await plan(state, false);
+  const { input, transactions, courtMaxAttempts } = await plan(state, false);
   for (const tx of transactions) {
     const method = tx.actions[0].params.methodName;
     if (method === "register_spec" && state.txs.register_spec?.confirmedAt) {
@@ -472,11 +524,18 @@ async function sendPlanLocked(state: RunState): Promise<boolean> {
       };
     }
     if (method === "create_market") {
-      const createCall = (durationMinutes: number): Call => {
-        const rebuilt = buildCreateMarketTxs({
-          ...input,
-          duration_minutes: durationMinutes,
-        });
+      const createCall = (
+        durationMinutes: number,
+        windowMinutes = state.resolutionWindowMinutes,
+      ): Call => {
+        const rebuilt = createPlan(
+          {
+            ...input,
+            duration_minutes: durationMinutes,
+            resolution_window_minutes: windowMinutes,
+          },
+          state.scenario,
+        );
         const createTx = rebuilt.find(
           (candidate) =>
             candidate.actions[0].params.methodName === "create_market",
@@ -507,13 +566,21 @@ async function sendPlanLocked(state: RunState): Promise<boolean> {
             Date.now(),
           );
           state.effectiveDurationMinutes = effective;
+          if (state.scenario !== "NEGW")
+            state.resolutionWindowMinutes = resolutionWindowMinutes(
+              state.spec as { observation: { at: string } },
+              state.resolutionWindowMinutes,
+              effective,
+              courtMaxAttempts,
+              Date.now(),
+            );
           await save(state);
           if (!Number.isInteger(effective) || effective < 5) {
             throw new Error(
               `Cannot create market: only ${effective} safe minutes remain before observation ${state.spec.observation.at}; Noa requires at least 5. Spec registration succeeded, but no market was created. The credit remains with ${USER(1)}. Start a fresh run.`,
             );
           }
-          return createCall(effective);
+          return createCall(effective, state.resolutionWindowMinutes);
         };
       }
     }
@@ -1019,7 +1086,45 @@ async function independent(state: RunState, persist = true): Promise<void> {
   const scenario = state.scenario;
   const verdict = state.verdictRecord?.verdict ?? state.verdictRecord;
   const finalIndex = state.noa?.winning_outcome;
-  if (scenario === "A6" || scenario === "A7") {
+  if (scenario === "NEGW") {
+    state.negative ??= {};
+    const evidence = await keeperLinkEvidence(state.marketId!);
+    state.negative.linkAttempts = evidence.attempts;
+    state.negative.reason = evidence.reason;
+    state.negative.permanent = evidence.permanent;
+    state.negative.observedForMs = evidence.firstRejectionAt
+      ? Date.now() - Date.parse(evidence.firstRejectionAt)
+      : 0;
+    state.negative.creatorBalanceAfterVoid = (
+      await rawAccountBalance(USER(1))
+    ).toString();
+    state.negative.creatorResidualZero =
+      BigInt(String(state.noa?.creator_residual ?? "-1")) === 0n;
+    await inspectVoidSettlement(state);
+    state.negative.voidedBy ??= evidence.voidTx ? "keeper" : "unknown";
+    state.negative.stakeReturned = Boolean(
+      state.negative.marketSettledEvent ||
+      (state.negative.creatorResidualZero &&
+        BigInt(state.negative.creatorBalanceAfterVoid) >
+          BigInt(state.negative.creatorBalanceAfterCreate ?? "0")),
+    );
+    const result = evaluateNegw({
+      reason: state.negative.reason,
+      permanent: Boolean(state.negative.permanent),
+      linkAttempts: state.negative.linkAttempts,
+      observedForMs: state.negative.observedForMs,
+      everLinked: Boolean(state.negative.everLinked),
+      courtLinked: Boolean(state.court),
+      noaStatus: state.noa?.status,
+      stakeReturned: Boolean(state.negative.stakeReturned),
+    });
+    state.independent = { ...state.negative, summary: result.summary };
+    state.pass = result.pass;
+    state.notes = [
+      ...(state.notes ?? []).filter((item) => !item.startsWith("voided by ")),
+      `voided by ${state.negative.voidedBy}; ${state.negative.reason ?? "no rejection reason"}`,
+    ];
+  } else if (scenario === "A6" || scenario === "A7") {
     const attempts = Number(state.court?.attempts ?? state.court?.attempt ?? 0);
     const result = evaluateVoid({
       noaStatus: state.noa?.status,
@@ -1138,11 +1243,141 @@ async function independent(state: RunState, persist = true): Promise<void> {
   if (persist) await save(state);
 }
 
+async function inspectVoidSettlement(state: RunState): Promise<void> {
+  const hashes = [
+    state.txs.void_unlinked?.hash,
+    ...(state.keeper.void_unlinked ?? []),
+  ].filter((hash): hash is string => Boolean(hash));
+  for (const hash of hashes) {
+    const signer =
+      state.txs.void_unlinked?.hash === hash
+        ? USER(1)
+        : "court-ops.noamarket.testnet";
+    try {
+      const outcome = await rpc.status(hash, signer);
+      const encoded = outcome.status?.SuccessValue;
+      if (
+        typeof encoded === "string" &&
+        Buffer.from(encoded, "base64").toString("utf8") === "true"
+      )
+        state.negative!.voidedBy = signer === USER(1) ? USER(1) : "keeper";
+      const logs = (outcome.receipts_outcome ?? []).flatMap(
+        (receipt: any) => receipt.outcome?.logs ?? [],
+      );
+      if (
+        logs.some(
+          (log: string) =>
+            log.includes("market_settled") &&
+            (log.includes(`\"market_id\":${state.marketId}`) ||
+              log.includes(`\"market_id\":\"${state.marketId}\"`)),
+        )
+      ) {
+        state.negative!.marketSettledEvent = true;
+        state.negative!.voidedBy = signer === USER(1) ? USER(1) : "keeper";
+      }
+    } catch (error) {
+      note(
+        state,
+        `void settlement receipt unavailable ${hash}: ${String(error)}`,
+      );
+    }
+  }
+}
+
+async function executeNegw(state: RunState): Promise<void> {
+  state.negative ??= {};
+  if (state.stage === "created") {
+    state.negative.creatorBalanceAfterCreate = (
+      await rawAccountBalance(USER(1))
+    ).toString();
+    state.stage = "neg_wait_rejection";
+    await save(state);
+  }
+  if (state.stage === "neg_wait_rejection") {
+    const deadline = Date.now() + 12 * 60_000;
+    while (Date.now() < deadline) {
+      if (!(await pollSnapshot(state))) {
+        await sleep(10_000);
+        continue;
+      }
+      if (state.court) state.negative.everLinked = true;
+      const evidence = await keeperLinkEvidence(state.marketId!);
+      state.negative.firstRejectionAt = evidence.firstRejectionAt;
+      state.negative.reason = evidence.reason;
+      state.negative.linkAttempts = evidence.attempts;
+      state.negative.permanent = evidence.permanent;
+      state.negative.observedForMs = evidence.firstRejectionAt
+        ? Date.now() - Date.parse(evidence.firstRejectionAt)
+        : 0;
+      if (evidence.permanent && state.negative.observedForMs >= 3 * 60_000)
+        break;
+      await save(state);
+      await sleep(15_000);
+    }
+    state.stage = "neg_wait_deadline";
+    await save(state);
+  }
+  if (state.stage === "neg_wait_deadline") {
+    const timeout = Date.now() + 35 * 60_000;
+    while (Date.now() < timeout) {
+      if (!(await pollSnapshot(state))) {
+        await sleep(15_000);
+        continue;
+      }
+      if (state.court) state.negative.everLinked = true;
+      if (state.noa?.status === "Void") break;
+      const deadlineMs = Number(
+        BigInt(String(state.noa?.resolution_deadline ?? "0")) / 1_000_000n,
+      );
+      if (deadlineMs && Date.now() > deadlineMs + 5_000) {
+        if (!state.court && !state.txs.void_unlinked) {
+          try {
+            await sendCall(
+              state,
+              "void_unlinked",
+              USER(1),
+              COURT,
+              "void_unlinked",
+              { market_id: state.marketId },
+              100,
+            );
+            await save(state);
+          } catch (error) {
+            note(state, `void_unlinked attempt failed: ${String(error)}`);
+            await save(state);
+          }
+        }
+      }
+      await sleep(15_000);
+    }
+    if (state.noa?.status !== "Void")
+      throw new Error("NEGW market was not voided after Noa deadline");
+    state.stage = "neg_voided";
+    await save(state);
+  }
+  if (state.stage === "neg_voided") {
+    await snapshot(state);
+    await independent(state);
+    state.stage = "checked";
+    await save(state);
+  }
+  if (state.stage === "checked") {
+    await appendRow(state);
+    state.stage = "done";
+    await save(state);
+    note(state, `${state.pass ? "PASS" : "FAIL"} market ${state.marketId}`);
+  }
+}
+
 async function execute(state: RunState): Promise<void> {
   state.error = undefined;
   await save(state);
   if (["prepared", "preflight"].includes(state.stage)) {
     await sendPlan(state);
+  }
+  if (state.scenario === "NEGW") {
+    await executeNegw(state);
+    return;
   }
   if (state.stage === "created") {
     await afterCreate(state);
@@ -1202,8 +1437,9 @@ async function runOne(
   scenario: Scenario,
   dryRun: boolean,
   durationOverride?: number,
+  tag?: string,
 ): Promise<void> {
-  const state = prepare(scenario, durationOverride);
+  const state = prepare(scenario, durationOverride, tag);
   try {
     if (!dryRun) await save(state);
     if (dryRun) {
@@ -1229,6 +1465,7 @@ async function main(): Promise<void> {
   const args = process.argv.slice(2);
   let dryRun = false;
   let durationOverride: number | undefined;
+  let tag: string | undefined;
   const positional: string[] = [];
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
@@ -1238,6 +1475,11 @@ async function main(): Promise<void> {
       if (durationOverride !== undefined)
         throw new Error("--duration may only be specified once");
       durationOverride = parseDurationMinutes(args[++index] ?? "");
+    } else if (arg === "--tag") {
+      if (tag !== undefined)
+        throw new Error("--tag may only be specified once");
+      tag = args[++index];
+      if (!tag?.trim()) throw new Error("--tag requires nonempty text");
     } else if (arg.startsWith("--")) {
       throw new Error(`Unknown option: ${arg}`);
     } else {
@@ -1246,10 +1488,10 @@ async function main(): Promise<void> {
   }
   const target = positional[0];
   if (
-    durationOverride !== undefined &&
+    (durationOverride !== undefined || tag !== undefined) &&
     ["fixtures", "resume", "rerow"].includes(target)
   )
-    throw new Error("--duration applies only to new scenario runs");
+    throw new Error("--duration and --tag apply only to new scenario runs");
   if (target === "fixtures") {
     if (dryRun)
       throw new Error(
@@ -1296,7 +1538,7 @@ async function main(): Promise<void> {
   const settled = await Promise.allSettled(
     scenarios.map(async (scenario, index) => {
       if (!dryRun) await sleep(index * 5_000);
-      return runOne(scenario, dryRun, durationOverride);
+      return runOne(scenario, dryRun, durationOverride, tag);
     }),
   );
   if (settled.some((item) => item.status === "rejected")) process.exitCode = 1;

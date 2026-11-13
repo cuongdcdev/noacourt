@@ -36,7 +36,8 @@ export function effectiveMarketDurationMinutes(
 export function buildSpec(input: SpecInput): Record<string, any> {
   const { scenario, now } = input;
   const failure = scenario === "A6" || scenario === "A7";
-  const duration = input.durationMinutes ?? (failure ? 8 : 10);
+  const duration =
+    input.durationMinutes ?? (failure ? 8 : scenario === "NEGW" ? 5 : 10);
   const at = observationTime(
     now,
     scenario === "A2" || scenario === "A3" ? duration + 3 : duration,
@@ -45,9 +46,11 @@ export function buildSpec(input: SpecInput): Record<string, any> {
     .toISOString()
     .replace(".000Z", "Z");
   const rss = scenario === "A8" || scenario === "A8n" || scenario === "A9";
-  const price = scenario === "A1" || scenario === "A2" || scenario === "A3";
-  const symbol = scenario === "A1" ? "NEARUSDT" : "BTCUSDT";
-  const instId = scenario === "A1" ? "NEAR-USDT" : "BTC-USDT";
+  const price = ["A1", "A2", "A3", "NEGW"].includes(scenario);
+  const symbol =
+    scenario === "A1" || scenario === "NEGW" ? "NEARUSDT" : "BTCUSDT";
+  const instId =
+    scenario === "A1" || scenario === "NEGW" ? "NEAR-USDT" : "BTC-USDT";
   const priceSources = [
     {
       id: "binance",
@@ -167,7 +170,10 @@ export function buildSpec(input: SpecInput): Record<string, any> {
     decide,
     outcome_map: outcomeMap,
     on_unavailable: "void",
-    retry: { max_attempts: 3, every: failure ? "2m" : "3m" },
+    retry: {
+      max_attempts: 3,
+      every: scenario === "NEGW" ? "5m" : failure ? "2m" : "3m",
+    },
   };
 }
 

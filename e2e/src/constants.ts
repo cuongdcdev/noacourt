@@ -25,6 +25,7 @@ export const SCENARIOS = [
   "A8",
   "A8n",
   "A9",
+  "NEGW",
 ] as const;
 export type Scenario = (typeof SCENARIOS)[number];
 export function parseDurationMinutes(value: string): number {
