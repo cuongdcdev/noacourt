@@ -266,13 +266,23 @@ async function plan(
   const courtConfig = await view<any>(COURT, "get_config", {});
   const courtMaxAttempts = Number(courtConfig.max_attempts ?? 5);
   state.courtMaxAttempts = courtMaxAttempts;
-  if (state.scenario !== "NEGW")
+  const planNowMs = Date.now();
+  const resumingSignedCreate = Boolean(state.txs.create_market);
+  const planDuration = resumingSignedCreate
+    ? (state.effectiveDurationMinutes ?? state.durationMinutes)
+    : state.durationMinutes;
+  // A signed create already has fixed args. Use an estimate at observation only
+  // to reconstruct that call for safe polling or re-signing of identical args.
+  const expirationEstimateAt = resumingSignedCreate
+    ? state.spec.observation.at
+    : new Date(planNowMs + planDuration * 60_000).toISOString();
+  if (state.scenario !== "NEGW" && !resumingSignedCreate)
     state.resolutionWindowMinutes = resolutionWindowMinutes(
-      state.spec as { observation: { at: string } },
+      state.spec as Parameters<typeof resolutionWindowMinutes>[0],
       state.resolutionWindowMinutes,
-      state.durationMinutes,
+      planDuration,
       courtMaxAttempts,
-      Date.now(),
+      planNowMs,
     );
   if (courtConfig.resolver_source?.Project?.version_key == null) {
     process.stderr.write(
@@ -287,7 +297,8 @@ async function plan(
     stake: "100",
     token_id: TOKEN,
     token_decimals: 18,
-    duration_minutes: state.durationMinutes,
+    duration_minutes: planDuration,
+    expiration_estimate_at: expirationEstimateAt,
     resolution_window_minutes: state.resolutionWindowMinutes,
     court_contract: COURT,
     noa_contract: NOA,
@@ -298,7 +309,7 @@ async function plan(
     creator: USER(1),
     court_max_attempts: courtMaxAttempts,
   };
-  const transactions = createPlan(input, state.scenario);
+  const transactions = createPlan(input, state.scenario, resumingSignedCreate);
   if (dryRun) {
     process.stdout.write(
       `[${state.scenario}] spec_hash=${state.specHash} observation=${state.spec.observation.at} price=${state.price?.value ?? "n/a"}\n`,
@@ -423,23 +434,53 @@ function plannedCall(tx: WalletTransaction): Call {
 function createPlan(
   input: BuildInput,
   scenario: Scenario,
+  existingSignedCreate = false,
 ): WalletTransaction[] {
-  if (scenario !== "NEGW") return buildCreateMarketTxs(input);
-  // NEGW intentionally violates the normal builder's retry-window guard.
-  const required = requiredResolutionWindowMinutes(
-    input.spec_json,
-    input.court_max_attempts,
+  const spec = JSON.parse(input.spec_json) as {
+    observation: { at: string };
+    retry: { max_attempts: number; every: string };
+  };
+  const expirationEstimateAt =
+    input.expiration_estimate_at ??
+    new Date(Date.now() + (input.duration_minutes ?? 0) * 60_000).toISOString();
+  const courtMaxAttempts = input.court_max_attempts ?? spec.retry.max_attempts;
+  const effectiveAttempts = Math.min(spec.retry.max_attempts, courtMaxAttempts);
+  const requiredForCourt = requiredResolutionWindowMinutes(
+    spec.observation.at,
+    expirationEstimateAt,
+    effectiveAttempts,
+    spec.retry.every,
+  );
+  const requestedWindow = input.resolution_window_minutes;
+  if (
+    scenario !== "NEGW" &&
+    !existingSignedCreate &&
+    requestedWindow !== undefined &&
+    requestedWindow < requiredForCourt
+  )
+    throw new Error("resolution window is too short for Court retries");
+  // The shared builder uses max(spec, Court) attempts; Court uses min. Build a
+  // valid template, then retain the Court-sized window (or NEGW's deliberate 10m).
+  const requiredForBuilder = requiredResolutionWindowMinutes(
+    spec.observation.at,
+    expirationEstimateAt,
+    Math.max(spec.retry.max_attempts, courtMaxAttempts),
+    spec.retry.every,
   );
   const transactions = buildCreateMarketTxs({
     ...input,
-    resolution_window_minutes: required,
+    expiration_estimate_at: expirationEstimateAt,
+    resolution_window_minutes: Math.max(
+      requestedWindow ?? requiredForCourt,
+      requiredForBuilder,
+    ),
   });
   const create = transactions.find(
     (tx) => tx.actions[0].params.methodName === "create_market",
   );
-  if (!create) throw new Error("NEGW plan has no create_market transaction");
+  if (!create) throw new Error("Plan has no create_market transaction");
   create.actions[0].params.args.resolution_window_minutes =
-    input.resolution_window_minutes;
+    requestedWindow ?? requiredForCourt;
   return transactions;
 }
 
@@ -536,14 +577,19 @@ async function sendPlanLocked(state: RunState): Promise<boolean> {
       const createCall = (
         durationMinutes: number,
         windowMinutes = state.resolutionWindowMinutes,
+        expirationEstimateAt = new Date(
+          Date.now() + durationMinutes * 60_000,
+        ).toISOString(),
       ): Call => {
         const rebuilt = createPlan(
           {
             ...input,
             duration_minutes: durationMinutes,
             resolution_window_minutes: windowMinutes,
+            expiration_estimate_at: expirationEstimateAt,
           },
           state.scenario,
+          Boolean(state.txs.create_market),
         );
         const createTx = rebuilt.find(
           (candidate) =>
@@ -555,7 +601,11 @@ async function sendPlanLocked(state: RunState): Promise<boolean> {
       };
       if (state.txs.create_market) {
         if (state.effectiveDurationMinutes !== undefined)
-          call = createCall(state.effectiveDurationMinutes);
+          call = createCall(
+            state.effectiveDurationMinutes,
+            state.resolutionWindowMinutes,
+            state.spec.observation.at,
+          );
       } else {
         beforeSign = async () => {
           if (
@@ -569,27 +619,33 @@ async function sendPlanLocked(state: RunState): Promise<boolean> {
             throw new Error(
               `Observation ${state.spec.observation.at} became too close after register_spec was confirmed. The spec cannot be changed; start a fresh run.`,
             );
+          const createNowMs = Date.now();
           const effective = effectiveMarketDurationMinutes(
             state.durationMinutes,
             state.spec.observation.at,
-            Date.now(),
+            createNowMs,
           );
           state.effectiveDurationMinutes = effective;
-          if (state.scenario !== "NEGW")
-            state.resolutionWindowMinutes = resolutionWindowMinutes(
-              state.spec as { observation: { at: string } },
-              state.resolutionWindowMinutes,
-              effective,
-              courtMaxAttempts,
-              Date.now(),
-            );
-          await save(state);
           if (!Number.isInteger(effective) || effective < 5) {
+            await save(state);
             throw new Error(
               `Cannot create market: only ${effective} safe minutes remain before observation ${state.spec.observation.at}; Noa requires at least 5. Spec registration succeeded, but no market was created. The credit remains with ${USER(1)}. Start a fresh run.`,
             );
           }
-          return createCall(effective, state.resolutionWindowMinutes);
+          if (state.scenario !== "NEGW")
+            state.resolutionWindowMinutes = resolutionWindowMinutes(
+              state.spec as Parameters<typeof resolutionWindowMinutes>[0],
+              state.resolutionWindowMinutes,
+              effective,
+              courtMaxAttempts,
+              createNowMs,
+            );
+          await save(state);
+          return createCall(
+            effective,
+            state.resolutionWindowMinutes,
+            new Date(createNowMs + effective * 60_000).toISOString(),
+          );
         };
       }
     }

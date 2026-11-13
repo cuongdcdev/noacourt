@@ -52,13 +52,25 @@ test("resolution window covers retry horizon and observation gap", () => {
     observation: { at: "2026-11-12T19:13:00Z" },
     retry: { max_attempts: 5, every: "3m" },
   };
-  assert.equal(resolutionWindowMinutes(spec, 15, 10, 5, now.getTime()), 24);
-  assert.equal(resolutionWindowMinutes(spec, 25, 10, 5, now.getTime()), 25);
+  assert.equal(resolutionWindowMinutes(spec, 15, 10, 5, now.getTime()), 27);
+  assert.equal(resolutionWindowMinutes(spec, 15, 10, 3, now.getTime()), 21);
+  assert.equal(resolutionWindowMinutes(spec, 30, 10, 5, now.getTime()), 30);
   const failure = {
     observation: { at: "2026-11-12T19:11:00Z" },
     retry: { max_attempts: 5, every: "3m" },
   };
-  assert.equal(resolutionWindowMinutes(failure, 20, 5, 5, now.getTime()), 27);
+  assert.equal(resolutionWindowMinutes(failure, 20, 5, 5, now.getTime()), 30);
+  assert.throws(
+    () =>
+      resolutionWindowMinutes(
+        { ...failure, observation: { at: "2026-11-12T19:04:00Z" } },
+        20,
+        5,
+        5,
+        now.getTime(),
+      ),
+    /expiration estimate must be <= observation.at/,
+  );
 });
 
 test("A6 saved retry timestamp prevents the premature fallback trigger", () => {
