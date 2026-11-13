@@ -1,11 +1,13 @@
 import canonicalize from "canonicalize";
 import { createHash } from "node:crypto";
 import { RPC_URLS, type Scenario } from "./constants.js";
+import { fixtureUrl as servedFixtureUrl } from "./fixtures.js";
 import { bucketEdges, unitsDecimal } from "./math.js";
 
 export type SpecInput = {
   scenario: Scenario;
   now: Date;
+  durationMinutes?: number;
   price?: string;
   venue?: "binance" | "okx";
   balance?: string;
@@ -34,7 +36,7 @@ export function effectiveMarketDurationMinutes(
 export function buildSpec(input: SpecInput): Record<string, any> {
   const { scenario, now } = input;
   const failure = scenario === "A6" || scenario === "A7";
-  const duration = failure ? 5 : 10;
+  const duration = input.durationMinutes ?? (failure ? 8 : 10);
   const at = observationTime(
     now,
     scenario === "A2" || scenario === "A3" ? 13 : duration,
@@ -116,7 +118,7 @@ export function buildSpec(input: SpecInput): Record<string, any> {
           method: "GET",
           url:
             input.fixtureUrl ??
-            "https://gist.githubusercontent.com/example/fixture/raw/score.json",
+            servedFixtureUrl(`noacourt-${scenario.toLowerCase()}.json`),
         },
         expect: { status: 200, assert: ["$.id == 'noa-test-1'"] },
         identity: "asserted",
@@ -133,7 +135,7 @@ export function buildSpec(input: SpecInput): Record<string, any> {
         params: {
           url:
             input.fixtureUrl ??
-            "https://gist.githubusercontent.com/example/fixture/raw/feed.xml",
+            servedFixtureUrl(`noacourt-${scenario.toLowerCase()}.xml`),
         },
       },
     ];

@@ -33,6 +33,9 @@ export type RunState = {
   txs: Record<string, TxRecord>;
   keeper: Record<string, string[]>;
   fallbacks: string[];
+  skippedBets?: Record<string, string>;
+  sawUnresolvable?: boolean;
+  notes?: string[];
   events: { at: string; message: string }[];
   court?: any;
   linkRejection?: string;
@@ -131,6 +134,7 @@ export function formatRow(state: RunState): string {
         ? `duration: ${state.effectiveDurationMinutes}m (planned ${state.durationMinutes}m)`
         : "",
       state.fallbacks.length ? `fallback: ${state.fallbacks.join(", ")}` : "",
+      ...(state.notes ?? []),
       state.error ?? "",
     ]
       .filter(Boolean)

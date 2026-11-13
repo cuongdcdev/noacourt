@@ -262,7 +262,7 @@ export class Sender {
         }) === "timeout"
       )
         break;
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await new Promise((resolve) => setTimeout(resolve, 2000));
     }
     throw new Error(
       `${label} status unknown for ${record.hash}; resume this results file, do not recreate market`,

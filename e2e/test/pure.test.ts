@@ -3,6 +3,13 @@ import test from "node:test";
 import { AccountMutex } from "../src/accountMutex.js";
 import { SCENARIOS, parseScenarioTarget } from "../src/constants.js";
 import {
+  evaluateVoid,
+  marketTooLate,
+  shouldSkipFallback,
+  specTimingDecision,
+} from "../src/decisions.js";
+import { fixtureName, fixtureUrl } from "../src/fixtures.js";
+import {
   bucketEdges,
   bucketOutcome,
   changeOutcome,
@@ -30,6 +37,109 @@ import {
 } from "../src/sign.js";
 
 const now = new Date("2026-11-12T19:00:05Z");
+
+test("creator lock wait rebuilds an unregistered spec and preserves registered specs", () => {
+  const queuedAt = new Date("2026-11-12T23:00:08Z");
+  const observationAt = observationTime(queuedAt, 8);
+  const afterLockWait = queuedAt.getTime() + 3 * 60_000;
+  const input = {
+    observationAt,
+    nowMs: afterLockWait,
+    durationMinutes: 8,
+  };
+  assert.equal(specTimingDecision(input), "rebuild");
+  assert.equal(
+    specTimingDecision({
+      ...input,
+      registration: { confirmedAt: "2026-11-12T23:00:09Z" },
+    }),
+    "abort",
+  );
+  assert.equal(
+    specTimingDecision({ ...input, registration: {} }),
+    "resume_registration",
+  );
+  assert.equal(
+    specTimingDecision({ ...input, nowMs: queuedAt.getTime() }),
+    "keep",
+  );
+  const rebuilt = buildSpec({
+    scenario: "A6",
+    now: new Date(afterLockWait),
+    durationMinutes: 8,
+    fixtureUrl: "https://example.org/fixture.json",
+  });
+  assert.ok(Date.parse(rebuilt.observation.at) >= afterLockWait + 11 * 60_000);
+});
+
+test("fresh Court status suppresses stale trigger fallbacks", () => {
+  for (const status of ["pending", "resolved", "unresolvable", "voided"])
+    assert.equal(shouldSkipFallback(status, "trigger"), true);
+  assert.equal(shouldSkipFallback("linked", "trigger"), false);
+  assert.equal(shouldSkipFallback("linked", "link_market"), true);
+});
+
+test("bets skip at the 45-second expiration guard", () => {
+  const nowMs = now.getTime();
+  const market = (offsetMs: number) => ({
+    status: "Active",
+    expiration_time: String(BigInt(nowMs + offsetMs) * 1_000_000n),
+  });
+  assert.equal(marketTooLate(market(46_000), nowMs), false);
+  assert.equal(marketTooLate(market(45_000), nowMs), true);
+  assert.equal(marketTooLate(market(-1), nowMs), true);
+  assert.equal(
+    marketTooLate({ ...market(60_000), status: "Resolved" }, nowMs),
+    true,
+  );
+});
+
+test("void proof accepts deadline void after fewer than three attempts", () => {
+  const evidence = {
+    noaStatus: "Void",
+    courtStatus: "voided",
+    attempts: 2,
+    pendingResolution: null,
+    resolveReceiptCount: 0,
+    verdictStatus: "retry_after",
+    verdictReason: "assert_failed",
+  };
+  const result = evaluateVoid(evidence);
+  assert.equal(result.pass, true);
+  assert.match(
+    result.note,
+    /deadline void after 2 attempts; verdict errors: assert_failed/,
+  );
+  assert.equal(
+    evaluateVoid({ ...evidence, sawUnresolvable: true }).path,
+    "unresolvable->void",
+  );
+  assert.equal(
+    evaluateVoid({ ...evidence, resolveReceiptCount: 1 }).pass,
+    false,
+  );
+  assert.equal(
+    evaluateVoid({ ...evidence, pendingResolution: {} }).pass,
+    false,
+  );
+  assert.equal(
+    evaluateVoid({ ...evidence, verdictStatus: "resolved" }).pass,
+    false,
+  );
+  assert.equal(evaluateVoid({ ...evidence, attempts: 0 }).pass, false);
+});
+
+test("fixture names are unique-safe and URLs use the configured base", () => {
+  const filename = fixtureName("A8n", now, "a1b2c3d4");
+  assert.equal(filename, "e2e-a8n-20261112t190005000z-a1b2c3d4.xml");
+  assert.equal(
+    fixtureUrl(filename, "https://example.org/fixtures/"),
+    `https://example.org/fixtures/${filename}`,
+  );
+  assert.match(fixtureName("A6", now, "12345678"), /\.json$/);
+  assert.throws(() => fixtureUrl("../escape.json"), /Invalid fixture name/);
+  assert.throws(() => fixtureUrl("bad.js"), /Invalid fixture name/);
+});
 
 test("RPC retry backoff grows to 30 seconds and honors Retry-After", () => {
   const nowMs = Date.parse("2026-11-12T19:00:00Z");

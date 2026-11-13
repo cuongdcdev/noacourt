@@ -11,7 +11,7 @@ Health: https://noacourtmcp.junstudio.xyz/healthz
 - [Integration guide](https://github.com/cuongdcdev/noacourt/blob/main/docs/INTEGRATE.md): generic requests, callbacks, Noa links, and MCP use.
 - [ResolutionSpec and Verdict reference](https://github.com/cuongdcdev/noacourt/blob/main/docs/SPEC.md): source grammar, lint, decisions, and examples.
 - [Architecture](https://github.com/cuongdcdev/noacourt/blob/main/docs/ARCHITECTURE.md): component contracts and trust split.
-- [E2E results](https://github.com/cuongdcdev/noacourt/blob/main/E2E_RESULTS.md): passing A1–A4 testnet receipts and independent checks; A6–A9 await fixture hosting.
+- [E2E results](https://github.com/cuongdcdev/noacourt/blob/main/E2E_RESULTS.md): all first-wave scenarios passed on testnet, with receipts and independent checks.
 - [Court contract interface](https://github.com/cuongdcdev/noacourt/blob/main/contracts/court/README.md): exact arguments, gas, deposits, and states.
 
 ## Testnet IDs
@@ -27,7 +27,11 @@ Health: https://noacourtmcp.junstudio.xyz/healthz
 
 - [A1 NEAR/USDT market 67](https://testnet.nearblocks.io/txns/GtfMBy2GmCKKNLjBGbNm7Wppf3VTnZ8ydB92bMrBsDWs): resolved No on attempt 2; `tee: true`, submitted by OutLayer. Query Court `get_verdict({"id":"noa:67"})` for the stored receipt.
 - [A2–A4 markets 68–70](https://github.com/cuongdcdev/noacourt/blob/main/E2E_RESULTS.md): Flat, Up, and Yes respectively; all `tee: true`.
+- [A6 market 76](https://testnet.nearblocks.io/txns/BVuv2dZF6pWSLmY5JFYsSZ11rNdzCJ7wkEfoPQiLHm1A) and [A7 market 77](https://testnet.nearblocks.io/txns/3NbFB8K2giB7yxxFyfUCcunjNWd2Etfw2kvn2xzPYREW): identity assertion failure and deleted source, respectively; both unresolvable and voided.
+- [A8 market 73](https://testnet.nearblocks.io/txns/HMUwVHVvegxTKANcMiGvToiynC32BdRid28q9A1skBNt), [A8n market 74](https://testnet.nearblocks.io/txns/6vNnXRHexjnu1W699kqsLiSUnYgoDWuYiN9MFgnmTdFB), and [A9 market 75](https://testnet.nearblocks.io/txns/D4zeVBo7kT8nTmtftaqf4HdFFK8NQZorLxJXQEyjDZYw): text evidence resolved Yes, No, and No respectively.
 - [Generic `req:1`](https://testnet.nearblocks.io/txns/EwTtoX8cAJBDUZWJrYnKchPdbnkQa8dnNJCuxnoXwPrZ): request followed by [keeper trigger](https://testnet.nearblocks.io/txns/2FjTEHWCp6Um7Ro8NSgqGd4ukjz7i2qWAEsxJ1dtP9GA); resolved Yes, value `3.401`, attempt 2, `tee: true`.
+
+The first-wave verdicts have `tee: true` and `submitted_by: "outlayer"`. A6–A9 fixtures are served at `https://noacourtmcp.junstudio.xyz/fixtures/<name>` and labelled `self_declared`; this host is not in the verified-source list.
 
 ## Agent instructions
 

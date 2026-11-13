@@ -17,7 +17,7 @@ pnpm e2e rerow results/<timestamp>-A1.json
 
 Comma-separated targets such as `A2,A3,A4` run concurrently in one process with a five-second stagger.
 
-`A1` is the smoke test. `all` and `wave1` run all first-wave scenarios concurrently with a five-second stagger. The dry run fetches live prices and read-only testnet views, builds exact `register_spec` and `create_market` calls, and lints every canonical spec with the local resolver WASM. It never signs transactions or creates gists. The `fixtures` subcommand publishes static **secret** gist templates and writes their URLs to `fixtures/gists.json` and `fixtures/README.md`. Actual A6/A7/A8/A8n/A9 runs create a fresh gist each time. A6 edits the JSON identity, A7 deletes the gist, A8 adds an in-window launch item, A8n leaves only an old item, and A9 adds an instruction-only item.
+`A1` is the smoke test. `all` and `wave1` run all first-wave scenarios concurrently with a five-second stagger. The dry run fetches live prices and read-only testnet views, builds exact `register_spec` and `create_market` calls, and lints every canonical spec with the local resolver WASM. It never signs transactions or writes fixture files. The `fixtures` subcommand copies stable templates into the configured fixture directory and writes their URLs to `fixtures/urls.json` and `fixtures/README.md`. Actual A6/A7/A8/A8n/A9 runs create a unique file per run and verify its served bytes over HTTPS. A6 rewrites the JSON identity, A7 deletes its file, A8 adds an in-window launch item, A8n leaves only an old item, and A9 adds an instruction-only item.
 
 | Scenario | What it proves                                                  |
 | -------- | --------------------------------------------------------------- |
@@ -37,10 +37,13 @@ The keeper is expected to link, trigger, void, retry forwarding, and finalize. T
 
 Environment variables:
 
-| Variable              | Default                        | Purpose                                                                                        |
-| --------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------- |
-| `NEAR_RPC_URLS`       | Three testnet RPCs             | Comma-separated RPC rotation list for views, sends, and status                                 |
-| `WASMTIME_BIN`        | `/root/.wasmtime/bin/wasmtime` | Local resolver lint binary                                                                     |
-| `E2E_NEAR_AI_CAP_USD` | `5`                            | Cap on reserved juror spend estimate; each text scenario reserves three attempts at $0.05 each |
+| Variable                | Default                                      | Purpose                                                        |
+| ----------------------- | -------------------------------------------- | -------------------------------------------------------------- |
+| `NEAR_RPC_URLS`         | Three testnet RPCs                           | Comma-separated RPC rotation list for views, sends, and status |
+| `WASMTIME_BIN`          | `/root/.wasmtime/bin/wasmtime`               | Local resolver lint binary                                     |
+| `E2E_FIXTURE_DIR`       | `<repo>/apps/mcp/data/fixtures`              | Directory served by the MCP fixture endpoint                   |
+| `E2E_FIXTURE_BASE_URL`  | `https://noacourtmcp.junstudio.xyz/fixtures` | HTTPS URL for fixture verification and specs                   |
+| `E2E_NEAR_AI_CAP_USD`   | `5`                                          | Cap on estimated juror spend                                   |
+| `E2E_NEAR_AI_PRIOR_USD` | `0`                                          | Estimated NEAR AI spend elsewhere, added before the cap check  |
 
 Each run writes `e2e/results/<UTC timestamp>-<scenario>.json` after each step and appends one row to root `E2E_RESULTS.md` when checked. A failed run preserves its state for `resume`; it does not create a second market. The independent check fetches the same candle directly from Binance or OKX, queries the NPOINT contract, or checks final Court and Noa states as appropriate. A8/A9 never call `spec_simulate` because it would spend NEAR AI budget.

@@ -9,6 +9,12 @@ import {
 import { linkRejectionReason } from "../../apps/mcp/src/court/client.js";
 import { AccountMutex } from "./accountMutex.js";
 import {
+  evaluateVoid,
+  marketTooLate,
+  shouldSkipFallback,
+  specTimingDecision,
+} from "./decisions.js";
+import {
   COURT,
   NOA,
   TOKEN,
@@ -21,8 +27,11 @@ import {
 } from "./constants.js";
 import {
   createFixture,
+  fixtureName,
+  fixtureUrl,
   mutateFixture,
   publishStaticFixtures,
+  removeFixture,
 } from "./fixtures.js";
 import { lintSpec } from "./lint.js";
 import {
@@ -44,6 +53,7 @@ import {
   note,
   save,
   type RunState,
+  type TxRecord,
 } from "./state.js";
 import {
   buildSpec,
@@ -54,10 +64,13 @@ import {
 const rpc = new Rpc();
 const sender = new Sender(rpc);
 const accountMutex = new AccountMutex();
+const balanceCeilings = new Map<string, bigint>();
 const root = resolve(import.meta.dirname, "../..");
 const results = resolve(root, "e2e/results");
 const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
 const COURT_TRIGGER_GAS_TGAS = 300;
+
+class RebuildBeforeRegistration extends Error {}
 
 async function view<T>(
   contract: string,
@@ -99,40 +112,41 @@ async function mcpTool(name: string, args: unknown): Promise<any> {
   }
 }
 
-async function accountBalance(account: string): Promise<string> {
-  return String(
-    await view<string>(NOA, "get_user_balance", {
-      account_id: account,
-      token_id: TOKEN,
-    }),
+async function rawAccountBalance(account: string): Promise<bigint> {
+  return BigInt(
+    String(
+      await view<string>(NOA, "get_user_balance", {
+        account_id: account,
+        token_id: TOKEN,
+      }),
+    ),
   );
 }
 
-async function prepare(scenario: Scenario, dryRun: boolean): Promise<RunState> {
+async function accountBalance(account: string): Promise<string> {
+  const chainBalance = await rawAccountBalance(account);
+  const ceiling = balanceCeilings.get(account);
+  return (
+    ceiling !== undefined && chainBalance > ceiling ? ceiling : chainBalance
+  ).toString();
+}
+
+async function waitInternalCredit(
+  account: string,
+  minimum: bigint,
+): Promise<void> {
+  const deadline = Date.now() + 60_000;
+  while (Date.now() < deadline) {
+    if ((await rawAccountBalance(account)) >= minimum) return;
+    await sleep(2_000);
+  }
+  throw new Error(
+    `${account} internal balance did not reflect the top-up within one minute; resume this results file`,
+  );
+}
+
+function prepare(scenario: Scenario): RunState {
   const now = new Date();
-  const durationMinutes = isFailure(scenario) ? 5 : 10;
-  const resolutionWindowMinutes = isFailure(scenario) ? 10 : 15;
-  const fixture =
-    !dryRun && (isFailure(scenario) || isText(scenario))
-      ? await createFixture(scenario)
-      : undefined;
-  const symbol = scenario === "A1" ? "NEARUSDT" : "BTCUSDT";
-  const price = ["A1", "A2", "A3"].includes(scenario)
-    ? await livePrice(symbol)
-    : undefined;
-  const balanceBefore =
-    scenario === "A4"
-      ? await view<string>(TOKEN, "ft_balance_of", { account_id: USER(3) })
-      : undefined;
-  const spec = buildSpec({
-    scenario,
-    now,
-    price: price?.value,
-    venue: price?.venue,
-    balance: balanceBefore,
-    fixtureUrl: fixture?.url,
-  });
-  const { specJson, specHash } = canonicalSpec(spec);
   const file = resolve(
     results,
     `${now.toISOString().replaceAll(":", "-")}-${scenario}.json`,
@@ -142,19 +156,79 @@ async function prepare(scenario: Scenario, dryRun: boolean): Promise<RunState> {
     startedAt: now.toISOString(),
     file,
     stage: "prepared",
-    spec,
-    specJson,
-    specHash,
-    durationMinutes,
-    resolutionWindowMinutes,
-    price,
-    balanceBefore,
-    fixture,
+    spec: {},
+    specJson: "",
+    specHash: "",
+    durationMinutes: isFailure(scenario) ? 8 : 10,
+    resolutionWindowMinutes: isFailure(scenario) ? 20 : 15,
     txs: {},
     keeper: {},
     fallbacks: [],
     events: [],
   };
+}
+
+async function prepareSpec(
+  state: RunState,
+  dryRun: boolean,
+  forceRebuild = false,
+): Promise<void> {
+  if (!state.specHash || forceRebuild) {
+    const oldFixture = state.fixture;
+    const scenario = state.scenario;
+    const fixture =
+      !dryRun && (isFailure(scenario) || isText(scenario))
+        ? await createFixture(scenario)
+        : undefined;
+    const symbol = scenario === "A1" ? "NEARUSDT" : "BTCUSDT";
+    const price = ["A1", "A2", "A3"].includes(scenario)
+      ? await livePrice(symbol)
+      : undefined;
+    const balanceBefore =
+      scenario === "A4"
+        ? await view<string>(TOKEN, "ft_balance_of", { account_id: USER(3) })
+        : undefined;
+    const now = new Date();
+    state.fixture = fixture;
+    state.price = price;
+    state.balanceBefore = balanceBefore;
+    state.spec = buildSpec({
+      scenario,
+      now,
+      durationMinutes: state.durationMinutes,
+      price: price?.value,
+      venue: price?.venue,
+      balance: balanceBefore,
+      fixtureUrl:
+        fixture?.url ??
+        (isFailure(scenario) || isText(scenario)
+          ? fixtureUrl(fixtureName(scenario, now, "00000000"))
+          : undefined),
+    });
+    const canonical = canonicalSpec(state.spec);
+    state.specJson = canonical.specJson;
+    state.specHash = canonical.specHash;
+    if (!dryRun) await save(state);
+    if (oldFixture && oldFixture.filename !== fixture?.filename)
+      await removeFixture(oldFixture);
+  }
+  await lintSpec(state.specJson);
+  note(state, "local resolver lint OK");
+  if (dryRun) return;
+  if (["A1", "A2", "A3", "A4"].includes(state.scenario)) {
+    try {
+      const simulation = await mcpTool("spec_simulate", { spec: state.spec });
+      note(
+        state,
+        `preflight simulation: ${JSON.stringify(simulation).slice(0, 400)}`,
+      );
+    } catch (error) {
+      note(state, `preflight simulation unavailable: ${String(error)}`);
+    }
+  }
+  await spendReserve(state);
+  state.stage = "preflight";
+  await save(state);
 }
 
 async function plan(
@@ -212,6 +286,7 @@ async function reserveOne(state: RunState): Promise<void> {
   await mkdir(results, { recursive: true });
   let ledger: {
     estimatedUsd: number;
+    priorUsd?: number;
     reservations: {
       scenario: string;
       file: string;
@@ -230,10 +305,18 @@ async function reserveOne(state: RunState): Promise<void> {
     return;
   }
   const cap = Number(process.env.E2E_NEAR_AI_CAP_USD ?? "5");
+  const prior = Number(process.env.E2E_NEAR_AI_PRIOR_USD ?? "0");
+  if (!Number.isFinite(prior) || prior < 0)
+    throw new Error("E2E_NEAR_AI_PRIOR_USD must be a nonnegative number");
+  const recordedPrior = ledger.priorUsd;
+  ledger.priorUsd = Math.max(ledger.priorUsd ?? 0, prior);
+  if (recordedPrior !== ledger.priorUsd)
+    await writeFile(path, JSON.stringify(ledger, null, 2) + "\n");
   const estimate = 0.05 * 3;
-  if (!Number.isFinite(cap) || cap < 0 || ledger.estimatedUsd + estimate > cap)
+  const total = ledger.priorUsd + ledger.estimatedUsd + estimate;
+  if (!Number.isFinite(cap) || cap < 0 || total > cap)
     throw new Error(
-      `NEAR AI estimate cap exceeded: ${ledger.estimatedUsd + estimate} > ${cap}`,
+      `NEAR AI estimate cap exceeded: ${total} > ${cap} (prior ${ledger.priorUsd}, harness ${ledger.estimatedUsd}, new ${estimate})`,
     );
   ledger.estimatedUsd += estimate;
   ledger.reservations.push({
@@ -294,29 +377,40 @@ function plannedCall(tx: WalletTransaction): Call {
 }
 
 async function sendPlan(state: RunState): Promise<void> {
-  await accountMutex.run(USER(1), () => sendPlanLocked(state));
-}
-
-async function waitFinal(hash: string, signer: string): Promise<void> {
-  const deadline = Date.now() + 120_000;
-  while (Date.now() < deadline) {
-    let result: any;
-    try {
-      result = await rpc.status(hash, signer);
-    } catch {
-      await sleep(1_000);
-      continue;
-    }
-    if (result.final_execution_status === "FAILURE" || result.status?.Failure)
-      throw new Error(
-        `${hash} failed before finality: ${JSON.stringify(result.status?.Failure ?? result)}`,
+  await accountMutex.run(USER(1), async () => {
+    if (state.stage === "prepared") await prepareSpec(state, false);
+    if (state.stage !== "preflight") return;
+    while (true) {
+      if (!state.txs.create_market) {
+        const decision = specTimingDecision({
+          observationAt: state.spec.observation.at,
+          nowMs: Date.now(),
+          durationMinutes: state.durationMinutes,
+          registration: state.txs.register_spec,
+        });
+        if (decision === "rebuild") {
+          note(
+            state,
+            `observation ${state.spec.observation.at} became too close before registration; rebuilding spec`,
+          );
+          await prepareSpec(state, false, true);
+          continue;
+        }
+        if (decision === "abort")
+          throw new Error(
+            `Observation ${state.spec.observation.at} is too close for a new ${state.durationMinutes}-minute market. register_spec is confirmed, so this spec cannot be changed. Start a fresh run.`,
+          );
+      }
+      if (await sendPlanLocked(state)) break;
+      note(
+        state,
+        `observation ${state.spec.observation.at} became too close before register_spec was sent; rebuilding spec`,
       );
-    if (result.final_execution_status === "FINAL") return;
-    await sleep(1_000);
-  }
-  throw new Error(
-    `${hash} did not reach finality within two minutes; resume this results file`,
-  );
+      await prepareSpec(state, false, true);
+    }
+    state.stage = "created";
+    await save(state);
+  });
 }
 
 function creatorTopupLabel(state: RunState): string {
@@ -333,27 +427,44 @@ function creatorTopupLabel(state: RunState): string {
   return `topup_creator_${prior + 1}`;
 }
 
-async function sendPlanLocked(state: RunState): Promise<void> {
+async function sendPlanLocked(state: RunState): Promise<boolean> {
   if (retireFailedCreate(state)) await save(state);
   if (state.txs.create_market?.confirmedAt) {
     state.marketId = parseCreateMarketResult(
       state.txs.create_market.outcome,
     ).market_id;
-    await waitFinal(state.txs.create_market.hash, USER(1));
     await save(state);
-    return;
+    return true;
   }
   const { input, transactions } = await plan(state, false);
   for (const tx of transactions) {
     const method = tx.actions[0].params.methodName;
     if (method === "register_spec" && state.txs.register_spec?.confirmedAt) {
-      await waitFinal(state.txs.register_spec.hash, USER(1));
       continue;
+    }
+    if (method === "register_spec" && !state.txs.register_spec) {
+      const decision = specTimingDecision({
+        observationAt: state.spec.observation.at,
+        nowMs: Date.now(),
+        durationMinutes: state.durationMinutes,
+      });
+      if (decision === "rebuild") return false;
     }
     const label =
       method === "ft_transfer_call" ? creatorTopupLabel(state) : method;
     let call = plannedCall(tx);
     let beforeSign: (() => Promise<Call>) | undefined;
+    if (method === "register_spec" && !state.txs.register_spec) {
+      beforeSign = async () => {
+        const decision = specTimingDecision({
+          observationAt: state.spec.observation.at,
+          nowMs: Date.now(),
+          durationMinutes: state.durationMinutes,
+        });
+        if (decision === "rebuild") throw new RebuildBeforeRegistration();
+        return call;
+      };
+    }
     if (method === "create_market") {
       const createCall = (durationMinutes: number): Call => {
         const rebuilt = buildCreateMarketTxs({
@@ -373,6 +484,17 @@ async function sendPlanLocked(state: RunState): Promise<void> {
           call = createCall(state.effectiveDurationMinutes);
       } else {
         beforeSign = async () => {
+          if (
+            specTimingDecision({
+              observationAt: state.spec.observation.at,
+              nowMs: Date.now(),
+              durationMinutes: state.durationMinutes,
+              registration: state.txs.register_spec,
+            }) === "abort"
+          )
+            throw new Error(
+              `Observation ${state.spec.observation.at} became too close after register_spec was confirmed. The spec cannot be changed; start a fresh run.`,
+            );
           const effective = effectiveMarketDurationMinutes(
             state.durationMinutes,
             state.spec.observation.at,
@@ -389,13 +511,25 @@ async function sendPlanLocked(state: RunState): Promise<void> {
         };
       }
     }
-    const record = await sender.send(state, label, call, beforeSign);
+    let record: TxRecord;
+    try {
+      record = await sender.send(state, label, call, beforeSign);
+    } catch (error) {
+      if (error instanceof RebuildBeforeRegistration) return false;
+      throw error;
+    }
     note(state, `${method} ${record.hash}`);
-    await waitFinal(record.hash, USER(1));
-    if (method === "create_market")
+    if (method === "ft_transfer_call")
+      await waitInternalCredit(USER(1), decimalUnits("100"));
+    if (method === "create_market") {
       state.marketId = parseCreateMarketResult(record.outcome).market_id;
+      const before = BigInt(input.internal_balance_yocto ?? "0");
+      const stake = decimalUnits("100");
+      balanceCeilings.set(USER(1), before > stake ? before - stake : 0n);
+    }
     await save(state);
   }
+  return true;
 }
 
 async function sendCall(
@@ -451,7 +585,7 @@ async function afterCreate(state: RunState): Promise<void> {
   }
 }
 
-async function snapshot(state: RunState): Promise<void> {
+async function snapshot(state: RunState, persist = true): Promise<void> {
   if (state.marketId === undefined) throw new Error("Market ID missing");
   const id = state.marketId;
   const [court, noa, pending, verdict] = await Promise.all([
@@ -464,8 +598,9 @@ async function snapshot(state: RunState): Promise<void> {
   state.noa = noa;
   state.pendingResolution = pending;
   state.verdictRecord = verdict;
+  if (courtState(state) === "unresolvable") state.sawUnresolvable = true;
   await collectKeeper(state);
-  await save(state);
+  if (persist) await save(state);
 }
 
 async function pollSnapshot(state: RunState): Promise<boolean> {
@@ -529,8 +664,46 @@ async function fallback(
     | "void"
     | "finalize_resolution"
     | "retry_forward",
-): Promise<void> {
+): Promise<boolean> {
+  return accountMutex.run(USER(1), () => fallbackLocked(state, action));
+}
+
+async function fallbackLocked(
+  state: RunState,
+  action:
+    | "link_market"
+    | "trigger"
+    | "void"
+    | "finalize_resolution"
+    | "retry_forward",
+): Promise<boolean> {
   const id = state.marketId!;
+  let freshCourt: any;
+  try {
+    freshCourt = await view<any>(COURT, "get_market", { market_id: id });
+  } catch (error) {
+    const marker = `skip:${action}:court_view_unavailable`;
+    if (!state.fallbacks.includes(marker)) {
+      note(
+        state,
+        `FALLBACK ${action} skipped: fresh Court view unavailable: ${String(error)}`,
+      );
+      state.fallbacks.push(marker);
+      await save(state);
+    }
+    return false;
+  }
+  state.court = freshCourt;
+  const status = courtState(state);
+  if (shouldSkipFallback(status, action)) {
+    const marker = `skip:${action}:${status}`;
+    if (!state.fallbacks.includes(marker)) {
+      note(state, `FALLBACK ${action} skipped: Court is ${status}`);
+      state.fallbacks.push(marker);
+    }
+    await save(state);
+    return false;
+  }
   const label = `fallback_${action}_${state.fallbacks.length}`;
   note(state, `FALLBACK ${action}: keeper action is over three minutes late`);
   const call =
@@ -567,6 +740,7 @@ async function fallback(
     state.fallbacks.push(action, `${action} failed: ${reason}`);
   }
   await save(state);
+  return true;
 }
 
 async function waitLinked(state: RunState): Promise<void> {
@@ -623,8 +797,28 @@ async function betLocked(
 ): Promise<void> {
   const id = state.marketId!;
   const label = `bet_${account}_${outcome}`;
+  if (state.skippedBets?.[label]) return;
+  const prior = state.txs[label];
+  if (
+    prior?.outcome &&
+    /Market has expired/i.test(JSON.stringify(prior.outcome))
+  ) {
+    await skipBet(
+      state,
+      label,
+      `on-chain failure ${prior.hash}: Market has expired`,
+    );
+    return;
+  }
   if (state.txs[label]?.confirmedAt) {
-    await waitFinal(state.txs[label].hash, account);
+    return;
+  }
+  if (await marketClosingSoon(id)) {
+    await skipBet(
+      state,
+      label,
+      "market expires within 45 seconds or has expired",
+    );
     return;
   }
   const token = await view<any>(NOA, "get_whitelisted_token", {
@@ -634,7 +828,9 @@ async function betLocked(
   const spend = min > decimalUnits("10") ? min : decimalUnits("10");
   const needed = spend + spend / 50n + decimalUnits("1");
   const current = BigInt(await accountBalance(account));
+  let topup = 0n;
   if (current < needed) {
+    topup = needed - current;
     const topupLabel = `topup_${account}`;
     await sendCall(
       state,
@@ -642,29 +838,68 @@ async function betLocked(
       account,
       TOKEN,
       "ft_transfer_call",
-      { receiver_id: NOA, amount: (needed - current).toString(), msg: "" },
+      { receiver_id: NOA, amount: topup.toString(), msg: "" },
       100,
       "1",
     );
-    await waitFinal(state.txs[topupLabel].hash, account);
+    balanceCeilings.set(account, current + topup);
+    await waitInternalCredit(account, needed);
+  }
+  if (await marketClosingSoon(id)) {
+    await skipBet(
+      state,
+      label,
+      "market expires within 45 seconds or has expired after top-up",
+    );
+    return;
   }
   // 0.01 NEAR covers first-position storage; Noa requires at least 0.002 NEAR.
-  await sendCall(
-    state,
-    label,
-    account,
-    NOA,
-    "buy_shares",
-    {
-      market_id: id,
-      outcome_id: outcome,
-      spend_amount_max: spend.toString(),
-      min_shares_expected_fp: "0",
-    },
-    100,
-    yocto("0.01"),
-  );
-  await waitFinal(state.txs[label].hash, account);
+  try {
+    await sendCall(
+      state,
+      label,
+      account,
+      NOA,
+      "buy_shares",
+      {
+        market_id: id,
+        outcome_id: outcome,
+        spend_amount_max: spend.toString(),
+        min_shares_expected_fp: "0",
+      },
+      100,
+      yocto("0.01"),
+    );
+    const remaining = current + topup - spend - spend / 50n;
+    balanceCeilings.set(account, remaining > 0n ? remaining : 0n);
+  } catch (error) {
+    if (!/Market has expired/i.test(String(error))) throw error;
+    await skipBet(
+      state,
+      label,
+      `on-chain failure ${state.txs[label]?.hash ?? "unknown"}: Market has expired`,
+    );
+  }
+}
+
+async function marketClosingSoon(marketId: number): Promise<boolean> {
+  const market = await view<any>(NOA, "get_market", { market_id: marketId });
+  return marketTooLate(market, Date.now());
+}
+
+async function skipBet(
+  state: RunState,
+  label: string,
+  reason: string,
+): Promise<void> {
+  state.skippedBets ??= {};
+  if (!state.skippedBets[label]) {
+    note(state, `${label} skipped: ${reason}`);
+    state.notes ??= [];
+    state.notes.push(`${label} skipped: ${reason}`);
+  }
+  state.skippedBets[label] = reason;
+  await save(state);
 }
 
 async function waitTerminal(state: RunState): Promise<void> {
@@ -710,8 +945,9 @@ async function waitTerminal(state: RunState): Promise<void> {
       now < noaDeadline &&
       !state.fallbacks.includes(`trigger:${state.court?.attempts ?? 0}`)
     ) {
-      await fallback(state, "trigger");
-      state.fallbacks.push(`trigger:${state.court?.attempts ?? 0}`);
+      const attempt = state.court?.attempts ?? 0;
+      if (await fallback(state, "trigger"))
+        state.fallbacks.push(`trigger:${attempt}`);
     }
     await sleep(15_000);
   }
@@ -744,16 +980,25 @@ async function waitFinalized(state: RunState): Promise<void> {
 }
 
 async function claim(state: RunState): Promise<void> {
-  const winners =
-    state.noa?.status === "Void"
-      ? [USER(2), USER(4), ...(state.spec.outcomes.length > 2 ? [USER(5)] : [])]
-      : [
-          [USER(2), USER(4), USER(5)][Number(state.noa?.winning_outcome)],
-        ].filter(Boolean);
-  for (const account of winners)
+  const bettors = [
+    USER(2),
+    USER(4),
+    ...(state.spec.outcomes.length > 2 ? [USER(5)] : []),
+  ];
+  const winningAccount = bettors[Number(state.noa?.winning_outcome)];
+  for (const account of bettors) {
+    if (state.noa?.status !== "Void" && account !== winningAccount) continue;
+    const label = `claim_${account}`;
+    if (!state.txs[label] || state.txs[label].confirmedAt) {
+      const positions = await view<any[]>(NOA, "get_user_positions_in_market", {
+        account_id: account,
+        market_id: state.marketId,
+      });
+      if (!Array.isArray(positions) || positions.length === 0) continue;
+    }
     await sendCall(
       state,
-      `claim_${account}`,
+      label,
       account,
       NOA,
       "claim_winnings",
@@ -761,28 +1006,40 @@ async function claim(state: RunState): Promise<void> {
       100,
       "1",
     );
+  }
 }
 
-async function independent(state: RunState): Promise<void> {
+async function independent(state: RunState, persist = true): Promise<void> {
   const scenario = state.scenario;
   const verdict = state.verdictRecord?.verdict ?? state.verdictRecord;
   const finalIndex = state.noa?.winning_outcome;
   if (scenario === "A6" || scenario === "A7") {
     const attempts = Number(state.court?.attempts ?? state.court?.attempt ?? 0);
-    const valid =
-      state.noa?.status === "Void" &&
-      courtState(state) === "voided" &&
-      attempts >= 3 &&
-      !state.pendingResolution &&
-      verdict?.status !== "resolved" &&
-      !state.keeper.resolve_market?.length;
+    const result = evaluateVoid({
+      noaStatus: state.noa?.status,
+      courtStatus: courtState(state),
+      attempts,
+      pendingResolution: state.pendingResolution,
+      resolveReceiptCount: state.resolveReceipts?.length ?? 0,
+      verdictStatus: verdict?.status,
+      verdictReason: verdict?.reason,
+      sourceErrors: (verdict?.sources ?? []).map((source: any) => source.error),
+      courtError: state.court?.last_error,
+      sawUnresolvable: state.sawUnresolvable,
+    });
+    state.notes = [
+      ...(state.notes ?? []).filter(
+        (item) => !/^(unresolvable->void|deadline void after )/.test(item),
+      ),
+      result.note,
+    ];
     state.independent = {
       expected: "Void",
       actual: state.noa?.status,
       attempts,
-      summary: `void; attempts=${attempts}; no pending=${!state.pendingResolution}; verdict=${verdict?.status ?? "none"}`,
+      summary: result.summary,
     };
-    state.pass = valid;
+    state.pass = result.pass;
   } else if (["A8", "A8n", "A9"].includes(scenario)) {
     const actual = state.spec.outcomes[Number(finalIndex)] ?? null;
     const expected =
@@ -867,42 +1124,14 @@ async function independent(state: RunState): Promise<void> {
       state.noa?.status === "Resolved" &&
       state.spec.outcomes[Number(finalIndex)] === expected;
   }
-  await save(state);
+  if (persist) await save(state);
 }
 
 async function execute(state: RunState): Promise<void> {
-  if (["prepared", "preflight"].includes(state.stage)) {
-    const latestSafeStart = Date.now() + (state.durationMinutes + 1) * 60_000;
-    if (Date.parse(state.spec.observation.at) < latestSafeStart) {
-      throw new Error(
-        `Observation ${state.spec.observation.at} is too close for a new ${state.durationMinutes}-minute market. Start a fresh run; do not reuse or change this saved spec.`,
-      );
-    }
-  }
   state.error = undefined;
   await save(state);
-  if (state.stage === "prepared") {
-    await lintSpec(state.specJson);
-    note(state, "local resolver lint OK");
-    if (["A1", "A2", "A3", "A4"].includes(state.scenario)) {
-      try {
-        const simulation = await mcpTool("spec_simulate", { spec: state.spec });
-        note(
-          state,
-          `preflight simulation: ${JSON.stringify(simulation).slice(0, 400)}`,
-        );
-      } catch (error) {
-        note(state, `preflight simulation unavailable: ${String(error)}`);
-      }
-    }
-    await spendReserve(state);
-    state.stage = "preflight";
-    await save(state);
-  }
-  if (state.stage === "preflight") {
+  if (["prepared", "preflight"].includes(state.stage)) {
     await sendPlan(state);
-    state.stage = "created";
-    await save(state);
   }
   if (state.stage === "created") {
     await afterCreate(state);
@@ -959,12 +1188,11 @@ async function execute(state: RunState): Promise<void> {
 }
 
 async function runOne(scenario: Scenario, dryRun: boolean): Promise<void> {
-  const state = await prepare(scenario, dryRun);
+  const state = prepare(scenario);
   try {
     if (!dryRun) await save(state);
-    await lintSpec(state.specJson);
-    note(state, "local resolver lint OK");
     if (dryRun) {
+      await prepareSpec(state, true);
       await plan(state, true);
       return;
     }
@@ -989,11 +1217,11 @@ async function main(): Promise<void> {
   if (target === "fixtures") {
     if (dryRun)
       throw new Error(
-        "fixtures publishes gists; --dry-run has no publishing operation",
+        "fixtures copies static templates; --dry-run has no publishing operation",
       );
     await publishStaticFixtures();
     process.stdout.write(
-      "Static secret fixture gists published; URLs written to fixtures/gists.json and fixtures/README.md\n",
+      "Static fixture files published; URLs written to fixtures/urls.json and fixtures/README.md\n",
     );
     return;
   }
@@ -1015,9 +1243,12 @@ async function main(): Promise<void> {
     const file = args.find((arg) => arg.endsWith(".json"));
     if (!file) throw new Error("Usage: pnpm e2e rerow <results-file>");
     const state = await load(file);
+    await snapshot(state, false);
+    await collectNearBlocks(state);
     await inspectTriggerReceipts(state, (hash, signer) =>
       rpc.status(hash, signer),
     );
+    await independent(state, false);
     await appendRow(state, false);
     process.stdout.write(
       `Updated ${state.scenario} market ${state.marketId} row; saved result unchanged\n`,
