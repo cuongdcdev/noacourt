@@ -4,7 +4,7 @@ Standalone Node 22/pnpm server for the ten Noa Court MCP tools, wallet sign link
 
 ## Run
 
-From `apps/mcp`: `pnpm install`, `pnpm build`, `pnpm test`, then `pnpm start` (or `pnpm dev`). Configuration is read from the repository `.env` and process env; see `.env.example`. `/healthz` and `/mcp` listen on `127.0.0.1:3310` by default. The keeper starts when `KEEPER_ENABLED=1`. Default testnet RPCs are FastNEAR, NEAR testnet, and NEAR archival; custom endpoints can be set with `NEAR_RPC_URLS`.
+From `apps/mcp`: `pnpm install`, `pnpm build`, `pnpm test`, then `pnpm start` (or `pnpm dev`). Configuration is read from the repository `.env` and process env; see `.env.example`. `/healthz` and `/mcp` listen on `127.0.0.1:3310` by default. The keeper starts when `KEEPER_ENABLED=1`. Default testnet RPCs are FastNEAR, NEAR testnet, and FastNEAR archival (`https://archival-rpc.testnet.fastnear.com`); custom endpoints can be set with `NEAR_RPC_URLS`.
 
 `GET` and `HEAD /fixtures/:name` serve files from `DATA_DIR/fixtures` with no caching. Allowed file extensions are `.json`, `.xml`, `.rss`, `.html`, and `.txt`. Files can be edited on disk without restarting the server; the route has a separate 600 requests/minute/IP limit and no write endpoint.
 
@@ -21,7 +21,7 @@ The keeper signs each transaction once, submits it without waiting for execution
 
 ## Transaction builder
 
-Import `buildCreateMarketTxs` and `parseCreateMarketResult` from `src/lib.ts` or the built package entry. The builder converts NPOINT stake amounts with integer decimal math. If the account's Noa internal balance is insufficient, it adds `ft_transfer_call` before Court registration and Noa creation. The live signer plan reads Court's `min_deposit`, Noa's `market_creation_fee`, fee exemption, and internal balance through the rotating RPC client.
+Import `buildCreateMarketTxs`, `requiredResolutionWindowMinutes`, and `parseCreateMarketResult` from `src/lib.ts` or the built package entry. The builder converts NPOINT stake amounts with integer decimal math. It sets the resolution window to at least the greater of Noa's 10-minute minimum and `max_attempts × retry.every + 5 minutes`, rounded up. Both minute and day duration markets use `resolution_window_minutes`, as allowed by Noa. `market_create_link` warns when it raises an explicit shorter window. If the account's Noa internal balance is insufficient, it adds `ft_transfer_call` before Court registration and Noa creation. The live signer plan reads Court's `min_deposit`, Noa's `market_creation_fee`, fee exemption, and internal balance through the rotating RPC client.
 
 Noa currently charges 0.5 NEAR plus measured storage to non-exempt creators and **does not refund excess attached deposit** (`contracts/src/lib.rs` around `create_market`). The plan adds a 0.1 NEAR storage buffer, so the creator pays that excess. Fee-exempt creators attach zero to `create_market`.
 

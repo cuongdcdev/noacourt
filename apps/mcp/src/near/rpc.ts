@@ -51,8 +51,16 @@ export class NearRpc {
       signal: AbortSignal.timeout(10_000),
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const data = (await response.json()) as { result?: T; error?: unknown };
+    const body = await response.text();
+    if (body.trim().toUpperCase() === "DEPRECATED")
+      throw new Error("RPC endpoint deprecated");
+    const data = JSON.parse(body) as { result?: T; error?: unknown };
     if (data.error) throw new Error(JSON.stringify(data.error));
+    if (
+      typeof data.result === "string" &&
+      data.result.toUpperCase() === "DEPRECATED"
+    )
+      throw new Error("RPC endpoint deprecated");
     if (data.result === undefined)
       throw new Error("RPC response has no result");
     return data.result;

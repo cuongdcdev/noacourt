@@ -24,7 +24,7 @@ describe("infrastructure", () => {
       expect(loadConfig().nearRpcUrls).toEqual([
         "https://test.rpc.fastnear.com",
         "https://rpc.testnet.near.org",
-        "https://archival-rpc.testnet.near.org",
+        "https://archival-rpc.testnet.fastnear.com",
       ]);
       expect(loadConfig().triggerGraceSeconds).toBe(70);
     } finally {
@@ -54,6 +54,27 @@ describe("infrastructure", () => {
       name: "RpcError",
       attempts: 2,
     });
+  });
+  it.each([
+    ["HTTP 429", new Response("rate limited", { status: 429 })],
+    ["deprecated text", new Response("DEPRECATED", { status: 200 })],
+    [
+      "deprecated result",
+      new Response(JSON.stringify({ result: "DEPRECATED" }), { status: 200 }),
+    ],
+  ])("rotates past a %s endpoint", async (_name, first) => {
+    const urls: string[] = [];
+    const request = vi.fn(async (url: string | URL | Request) => {
+      urls.push(String(url));
+      return urls.length === 1
+        ? first.clone()
+        : new Response(JSON.stringify({ result: { ok: true } }), {
+            status: 200,
+          });
+    });
+    const rpc = new NearRpc(config(), request as typeof fetch, async () => {});
+    expect(await rpc.call("query", {})).toEqual({ ok: true });
+    expect(urls).toEqual(["https://one.example", "https://two.example"]);
   });
   it("keeps NEAR_AI_API out of argv and only in text judge simulate environment", async () => {
     const dir = temp();

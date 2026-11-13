@@ -21,7 +21,7 @@ export const verifiedHosts = [
   "free.rpc.fastnear.com",
   "rpc.mainnet.fastnear.com",
   "test.rpc.fastnear.com",
-  "archival-rpc.testnet.near.org",
+  "archival-rpc.testnet.fastnear.com",
   "near-testnet.lava.build",
   "near.lava.build",
 ];

@@ -8,6 +8,7 @@ import {
   buildCreateMarketTxs,
   decimalToUnits,
   parseCreateMarketResult,
+  requiredResolutionWindowMinutes,
 } from "../src/lib.js";
 import { renderRules } from "../src/spec/render.js";
 import { examples } from "../src/guide.js";
@@ -33,6 +34,51 @@ const basic = {
 const fixtureDir = () => mkdtempSync(join(tmpdir(), "noacourt-sign-"));
 
 describe("transaction builder", () => {
+  it("calculates retry windows with seconds, minutes, hours, days and fallback attempts", () => {
+    expect(requiredResolutionWindowMinutes(examples.A1)).toBe(20);
+    expect(
+      requiredResolutionWindowMinutes({
+        retry: { max_attempts: 10, every: "45s" },
+      }),
+    ).toBe(13);
+    expect(
+      requiredResolutionWindowMinutes({
+        retry: { max_attempts: 2, every: "2h" },
+      }),
+    ).toBe(245);
+    expect(
+      requiredResolutionWindowMinutes({
+        retry: { max_attempts: 1, every: "1d" },
+      }),
+    ).toBe(1445);
+    expect(requiredResolutionWindowMinutes({ retry: { every: "5m" } }, 4)).toBe(
+      25,
+    );
+    expect(requiredResolutionWindowMinutes({}, 3)).toBe(10);
+    expect(() =>
+      requiredResolutionWindowMinutes({ retry: { every: "5x" } }),
+    ).toThrow("retry.every");
+  });
+  it("uses the required minute window for day-duration markets and rejects a shorter direct plan", () => {
+    const dayMarket = buildCreateMarketTxs({
+      ...basic,
+      spec_json: JSON.stringify({ retry: { max_attempts: 3, every: "5m" } }),
+      duration_minutes: undefined,
+      duration_days: 1,
+    });
+    expect(dayMarket.at(-1)?.actions[0].params.args).toMatchObject({
+      duration_days: 1,
+      duration_minutes: null,
+      resolution_window_minutes: 20,
+    });
+    expect(() =>
+      buildCreateMarketTxs({
+        ...basic,
+        spec_json: JSON.stringify({ retry: { max_attempts: 3, every: "5m" } }),
+        resolution_window_minutes: 10,
+      }),
+    ).toThrow("at least 20");
+  });
   it("converts token amounts exactly without floating point", () => {
     expect(decimalToUnits("1.000000000000000001", 18)).toBe(
       "1000000000000000001",
@@ -188,6 +234,7 @@ describe("sign request HTTP", () => {
   } as unknown as NearRpc;
   const court = {
     resolverHash: () => null,
+    maxAttempts: vi.fn(async () => 4),
     configView: vi.fn(async () => ({
       min_deposit: "200000000000000000000000",
     })),
@@ -310,6 +357,93 @@ describe("sign request HTTP", () => {
     const link = JSON.parse(data.result.content[0].text);
     expect(link.url).toContain("/sign/");
     expect(link.qr_png_data_url).toMatch(/^data:image\/png;base64,/);
-    expect(store.get(link.url.split("/").at(-1)!)?.status).toBe("pending");
+    expect(link.summary.resolution_window_minutes).toBe(20);
+    expect(link.warnings).toEqual([]);
+    const request = store.get(link.url.split("/").at(-1)!)!;
+    expect(request.status).toBe("pending");
+    expect(
+      request.tx_plan.at(-1)?.actions[0].params.args.resolution_window_minutes,
+    ).toBe(20);
+  });
+  it("warns and raises an explicit short window in the stored sign plan", async () => {
+    const response = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 100,
+        method: "tools/call",
+        params: {
+          name: "market_create_link",
+          arguments: {
+            title: "NEAR market",
+            outcomes: ["Yes", "No"],
+            stake: "5",
+            duration_minutes: 10,
+            resolution_window_minutes: 10,
+            spec: examples.A1,
+          },
+        },
+      }),
+    });
+    const data = (await response.json()) as any;
+    expect(data.result.isError).not.toBe(true);
+    const link = JSON.parse(data.result.content[0].text);
+    expect(link.summary.resolution_window_minutes).toBe(20);
+    expect(link.warnings).toHaveLength(1);
+    expect(link.warnings[0]).toContain("raised to 20 minutes");
+    expect(link.text).toContain("raised to 20 minutes");
+    const id = link.url.split("/").at(-1)!;
+    expect(
+      store.get(id)?.tx_plan.at(-1)?.actions[0].params.args
+        .resolution_window_minutes,
+    ).toBe(20);
+    const publicData = (await (
+      await fetch(`${base}/api/sign/${id}`)
+    ).json()) as any;
+    expect(publicData.params.resolution_window_minutes).toBe(20);
+    const plan = (await (
+      await fetch(`${base}/api/sign/${id}/plan?account=${account}`)
+    ).json()) as any;
+    expect(
+      plan.tx_plan.at(-1).actions[0].params.args.resolution_window_minutes,
+    ).toBe(20);
+  });
+  it("uses Court max_attempts when the input spec omits it", async () => {
+    const response = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 101,
+        method: "tools/call",
+        params: {
+          name: "market_create_link",
+          arguments: {
+            title: "NEAR market",
+            outcomes: ["Yes", "No"],
+            stake: "5",
+            duration_minutes: 10,
+            spec: { ...examples.A1, retry: { every: "5m" } },
+          },
+        },
+      }),
+    });
+    const data = (await response.json()) as any;
+    expect(data.result.isError).not.toBe(true);
+    const link = JSON.parse(data.result.content[0].text);
+    expect(link.summary.resolution_window_minutes).toBe(25);
+    const request = store.get(link.url.split("/").at(-1)!)!;
+    expect(JSON.parse(request.spec_json).retry.max_attempts).toBe(4);
+    expect(
+      request.tx_plan.at(-1)?.actions[0].params.args.resolution_window_minutes,
+    ).toBe(25);
+    expect(court.maxAttempts).toHaveBeenCalled();
   });
 });

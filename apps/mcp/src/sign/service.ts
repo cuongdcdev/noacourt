@@ -52,6 +52,8 @@ export async function createSignRequest(
       token_id: input.token_id || config.marketToken,
       duration_minutes: input.duration_minutes,
       duration_days: input.duration_days,
+      resolution_window_minutes:
+        plan.at(-1)?.actions[0]?.params.args.resolution_window_minutes,
     },
   };
 }
@@ -70,6 +72,7 @@ export function publicRequest(config: Config, request: SignRequest) {
       stake: request.params.stake,
       duration_minutes: request.params.duration_minutes,
       duration_days: request.params.duration_days,
+      resolution_window_minutes: request.params.resolution_window_minutes,
       creator: request.params.creator,
     },
     spec_hash: request.spec_hash,

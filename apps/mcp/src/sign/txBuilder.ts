@@ -24,6 +24,7 @@ export type BuildInput = {
   duration_minutes?: number;
   duration_days?: number;
   resolution_window_minutes?: number;
+  court_max_attempts?: number;
   court_contract: string;
   noa_contract: string;
   register_deposit_yocto?: string;
@@ -32,6 +33,36 @@ export type BuildInput = {
   signer_id?: string;
   creator?: string;
 };
+
+export function requiredResolutionWindowMinutes(
+  spec: unknown,
+  courtMaxAttempts = 3,
+): number {
+  const parsed =
+    typeof spec === "string" ? (JSON.parse(spec) as unknown) : spec;
+  const retry =
+    parsed && typeof parsed === "object"
+      ? (parsed as Record<string, any>).retry
+      : undefined;
+  const attempts = retry?.max_attempts ?? courtMaxAttempts;
+  if (!Number.isSafeInteger(attempts) || attempts < 1)
+    throw new Error("retry max_attempts must be a positive integer");
+  const every = retry?.every;
+  let retrySeconds = 0n;
+  if (every !== undefined && every !== null) {
+    const match = typeof every === "string" && /^(\d+)(s|m|h|d)$/.exec(every);
+    if (!match)
+      throw new Error("retry.every must be a duration using s, m, h, or d");
+    const multiplier = { s: 1n, m: 60n, h: 3600n, d: 86400n }[
+      match[2] as "s" | "m" | "h" | "d"
+    ];
+    retrySeconds = BigInt(match[1]) * multiplier;
+  }
+  const minutes = (BigInt(attempts) * retrySeconds + 300n + 59n) / 60n;
+  if (minutes > BigInt(Number.MAX_SAFE_INTEGER))
+    throw new Error("required resolution window is too large");
+  return Math.max(10, Number(minutes));
+}
 
 export function decimalToUnits(amount: string, decimals: number): string {
   if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36)
@@ -78,6 +109,20 @@ export function buildCreateMarketTxs(input: BuildInput): WalletTransaction[] {
     (input.duration_days === undefined)
   )
     throw new Error("provide exactly one duration");
+  const requiredWindow = requiredResolutionWindowMinutes(
+    input.spec_json,
+    input.court_max_attempts,
+  );
+  const resolutionWindow = input.resolution_window_minutes ?? requiredWindow;
+  if (
+    !Number.isSafeInteger(resolutionWindow) ||
+    resolutionWindow < requiredWindow
+  )
+    throw new Error(
+      `resolution_window_minutes must be at least ${requiredWindow} for spec retries and Noa minimum`,
+    );
+  if (resolutionWindow > 365 * 1440)
+    throw new Error("resolution_window_minutes exceeds Noa's 365-day maximum");
   const tokenId = input.token_id || "point.noamarket.testnet";
   const stake = nonnegative(
     input.stake_yocto ??
@@ -138,7 +183,7 @@ export function buildCreateMarketTxs(input: BuildInput): WalletTransaction[] {
         resolver: input.court_contract,
         duration_minutes: input.duration_minutes ?? null,
         duration_days: input.duration_days ?? null,
-        resolution_window_minutes: input.resolution_window_minutes ?? 10,
+        resolution_window_minutes: resolutionWindow,
       },
       "100000000000000",
       createDeposit,

@@ -29,7 +29,7 @@ export function loadConfig() {
     nearNetwork: env("NEAR_NETWORK", "testnet"),
     nearRpcUrls: env(
       "NEAR_RPC_URLS",
-      "https://test.rpc.fastnear.com,https://rpc.testnet.near.org,https://archival-rpc.testnet.near.org",
+      "https://test.rpc.fastnear.com,https://rpc.testnet.near.org,https://archival-rpc.testnet.fastnear.com",
     )
       .split(",")
       .map((s) => s.trim())

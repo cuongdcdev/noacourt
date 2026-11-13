@@ -296,6 +296,7 @@ describe("keeper tick", () => {
     "wrong resolver",
     "outcomes mismatch",
     "expiration after observation",
+    "resolution window too short for retries",
     "metadata spec_hash mismatch",
     "invalid market deadline",
     "market is not Active",

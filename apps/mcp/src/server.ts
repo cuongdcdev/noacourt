@@ -18,7 +18,10 @@ import { prelint } from "./spec/prelint.js";
 import { renderRules } from "./spec/render.js";
 import { rawSample } from "./source.js";
 import { SignStore } from "./sign/store.js";
-import { decimalToUnits } from "./sign/txBuilder.js";
+import {
+  decimalToUnits,
+  requiredResolutionWindowMinutes,
+} from "./sign/txBuilder.js";
 import {
   completeSignRequest,
   createSignRequest,
@@ -580,12 +583,27 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
       },
       async (args) =>
         guard(async () => {
-          const checked = await lint(args.spec);
+          const originalSpec = parseSpec(args.spec);
+          const configuredAttempts =
+            originalSpec.retry?.max_attempts == null &&
+            typeof court.maxAttempts === "function"
+              ? await court.maxAttempts().catch(() => null)
+              : null;
+          const spec =
+            originalSpec.retry?.max_attempts == null
+              ? {
+                  ...originalSpec,
+                  retry: {
+                    ...originalSpec.retry,
+                    max_attempts: configuredAttempts ?? 3,
+                  },
+                }
+              : originalSpec;
+          const checked = await lint(spec);
           if (!checked.ok)
             throw new Error(
               `spec lint failed: ${formatLintErrors(checked.errors)}`,
             );
-          const spec = parseSpec(args.spec);
           if (JSON.stringify(args.outcomes) !== JSON.stringify(spec.outcomes))
             throw new Error(
               "market outcomes must equal spec.outcomes in order",
@@ -601,8 +619,21 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
             args.duration_minutes ?? (args.duration_days || 0) * 1440;
           if (minutes < 5 || minutes > 365 * 1440)
             throw new Error("duration must be 5 minutes to 365 days");
-          if ((args.resolution_window_minutes ?? 10) < 10)
-            throw new Error("resolution window must be at least 10 minutes");
+          const requiredWindow = requiredResolutionWindowMinutes(
+            spec,
+            configuredAttempts ?? 3,
+          );
+          const requestedWindow = args.resolution_window_minutes;
+          const resolutionWindow = Math.max(
+            requestedWindow ?? requiredWindow,
+            requiredWindow,
+          );
+          const warnings =
+            requestedWindow !== undefined && requestedWindow < requiredWindow
+              ? [
+                  `resolution_window_minutes ${requestedWindow} is too short for spec retries and Noa's 10-minute minimum; raised to ${requiredWindow} minutes (max_attempts × retry.every + 5 minutes, rounded up).`,
+                ]
+              : [];
           if (Date.now() + minutes * 60_000 > Date.parse(spec.observation.at))
             throw new Error("market expiration must be <= spec.observation.at");
           if (
@@ -612,8 +643,8 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
             throw new Error(
               "stake must be a positive NPOINT amount with at most 18 decimals",
             );
-          const rendered = renderRules(args.spec);
-          return createSignRequest(config, store, {
+          const rendered = renderRules(spec);
+          const link = await createSignRequest(config, store, {
             spec_json: rendered.spec_json,
             spec_hash: rendered.spec_hash,
             title: args.title,
@@ -623,9 +654,18 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
             token_decimals: 18,
             duration_minutes: args.duration_minutes,
             duration_days: args.duration_days,
-            resolution_window_minutes: args.resolution_window_minutes,
+            resolution_window_minutes: resolutionWindow,
+            court_max_attempts: configuredAttempts ?? 3,
             creator: args.creator,
           });
+          return {
+            ...link,
+            warnings,
+            text:
+              warnings.length > 0
+                ? warnings.join("\n")
+                : `Resolution window: ${resolutionWindow} minutes.`,
+          };
         })(),
     );
     register(
