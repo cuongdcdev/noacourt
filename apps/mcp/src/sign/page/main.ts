@@ -28,6 +28,11 @@ type PublicRequest = {
   spec_hash?: string;
   publication: PublicationView;
   qr_url: string;
+  spec_summary?: {
+    question?: string;
+    observation?: { at?: string; mode?: string; max_delay?: string };
+    sources?: { id: string; tool: string }[];
+  };
   result?: Record<string, any>;
   network: {
     networkId: "testnet" | "mainnet";
@@ -57,81 +62,181 @@ const button = document.getElementById(
   "sign-button",
 ) as HTMLButtonElement | null;
 
-function fact(label: string, value: Node | string, wide = false) {
-  const box = document.createElement("div");
-  box.className = wide ? "fact wide" : "fact";
-  const k = document.createElement("div");
-  k.className = "k";
-  k.textContent = label;
-  const v = document.createElement("div");
-  v.className = "v";
-  v.append(value);
-  box.append(k, v);
-  details.append(box);
+type Tone = "info" | "ok" | "bad" | "busy";
+// One place for status text: the element is an aria-live region, the tone only drives the dot colour.
+function setStatus(text: string, tone: Tone = "info") {
+  state.textContent = text;
+  state.dataset.tone = tone;
 }
-function chips(values: string[]) {
-  const wrap = document.createElement("div");
-  wrap.className = "chips";
-  for (const value of values) {
-    const c = document.createElement("span");
-    c.className = "chip";
-    c.textContent = value;
-    wrap.append(c);
-  }
-  return wrap;
+function el<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  className?: string,
+  text?: string,
+) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
 }
-function hashFact(label: string, value: string) {
-  const wrap = document.createElement("div");
-  wrap.className = "mono";
-  const code = document.createElement("code");
-  code.textContent = value;
-  code.title = value;
-  const copy = document.createElement("button");
+function term(label: string, value: Node | string, target: HTMLElement = details) {
+  const row = el("div", "row");
+  const dt = el("dt", undefined, label);
+  const dd = el("dd");
+  dd.append(value);
+  row.append(dt, dd);
+  target.append(row);
+}
+function words(values: string[]) {
+  const list = el("ul", "outcomes");
+  for (const value of values) list.append(el("li", undefined, value));
+  return list;
+}
+function copyable(value: string) {
+  const wrap = el("span", "hash");
+  const code = el("code", undefined, value);
+  const copy = el("button", "copy", "Copy");
   copy.type = "button";
-  copy.className = "copy";
-  copy.textContent = "Copy";
+  copy.setAttribute("aria-label", `Copy value ${value}`);
   copy.onclick = () => {
-    void navigator.clipboard?.writeText(value).then(() => {
-      copy.textContent = "Copied";
-      setTimeout(() => (copy.textContent = "Copy"), 1500);
-    }, () => undefined);
+    void navigator.clipboard?.writeText(value).then(
+      () => {
+        copy.textContent = "Copied";
+        setTimeout(() => (copy.textContent = "Copy"), 1500);
+      },
+      () => undefined,
+    );
   };
   wrap.append(code, copy);
-  fact(label, wrap, true);
+  return wrap;
 }
-// Mirror the state text into a data attribute so CSS can colour the status pill.
-const KNOWN_STATUS = ["pending", "completed", "expired", "not found"];
-new MutationObserver(() => {
-  const text = state.textContent ?? "";
-  state.dataset.status = KNOWN_STATUS.includes(text) ? text : "msg";
-}).observe(state, { childList: true, characterData: true, subtree: true });
+function formatUtc(iso: string) {
+  const date = new Date(iso);
+  if (Number.isNaN(+date)) return iso;
+  return `${date.toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC" })} UTC`;
+}
+function timeNode(iso: string, hint?: boolean) {
+  const frag = document.createDocumentFragment();
+  const t = el("time", undefined, formatUtc(iso));
+  if (!Number.isNaN(+new Date(iso))) t.dateTime = iso;
+  frag.append(t);
+  if (hint) {
+    const ms = +new Date(iso) - Date.now();
+    if (Number.isFinite(ms) && ms > 0) {
+      const hours = Math.round(ms / 36e5);
+      const days = Math.round(ms / 864e5);
+      frag.append(
+        el("span", "dim", ` · in ${hours < 48 ? `${hours} hour${hours === 1 ? "" : "s"}` : `${days} days`}`),
+      );
+    }
+  }
+  return frag;
+}
+function decisionLine(markdown: string) {
+  return /^##\s+Decision[ \t]*\n+([^\n]+)/m.exec(markdown)?.[1]?.trim();
+}
+
+// Tiny display-only markdown: headings, bullets, line breaks, inline code. Built with
+// createElement/textContent, so data is never parsed as HTML. The binding text is not altered
+// (the exact source is also shown verbatim under "Show exact source text").
+const INLINE = /(`[^`\n]+`|\{[^{}\n]*\}|\[[^\[\]\n]*\])/g;
+const LABEL = /^([A-Za-z][A-Za-z /_()-]{0,28}):\s+(\S.*)$/;
+function inline(parent: ParentNode, text: string) {
+  let last = 0;
+  for (const m of text.matchAll(INLINE)) {
+    const at = m.index ?? 0;
+    if (at > last) parent.append(text.slice(last, at));
+    parent.append(el("code", undefined, m[0].startsWith("`") ? m[0].slice(1, -1) : m[0]));
+    last = at + m[0].length;
+  }
+  if (last < text.length) parent.append(text.slice(last));
+}
+function line(parent: ParentNode, text: string) {
+  const m = LABEL.exec(text);
+  if (m) {
+    parent.append(el("strong", "lbl", `${m[1]}:`), " ");
+    inline(parent, m[2]);
+  } else inline(parent, text);
+}
+function renderRules(root: HTMLElement, text: string) {
+  root.replaceChildren();
+  let para: string[] = [];
+  let list: HTMLUListElement | null = null;
+  let item: HTMLLIElement | null = null;
+  const flush = () => {
+    if (!para.length) return;
+    const p = el("p");
+    para.forEach((l, i) => {
+      if (i) p.append(document.createElement("br"));
+      line(p, l);
+    });
+    root.append(p);
+    para = [];
+  };
+  for (const raw of text.replace(/\r\n?/g, "\n").split("\n")) {
+    const heading = /^(#{1,6})\s+(.*)$/.exec(raw);
+    const bullet = /^[-*]\s+(.*)$/.exec(raw);
+    if (!raw.trim()) {
+      flush();
+      list = item = null;
+    } else if (heading) {
+      flush();
+      list = item = null;
+      const h = el(heading[1].length === 1 ? "h3" : "h4");
+      inline(h, heading[2]);
+      root.append(h);
+    } else if (bullet) {
+      flush();
+      if (!list) root.append((list = el("ul")));
+      item = el("li");
+      line(item, bullet[1]);
+      list.append(item);
+    } else if (item && /^\s/.test(raw)) {
+      const cont = el("span", "cont");
+      line(cont, raw.trim());
+      item.append(cont);
+    } else {
+      list = item = null;
+      para.push(raw);
+    }
+  }
+  flush();
+}
 function setDoc(textId: string, text: string | null | undefined) {
-  const pre = document.getElementById(textId)!;
-  pre.textContent = text ?? "";
-  (pre.closest(".doc") as HTMLElement).hidden = !text?.trim();
+  const box = document.getElementById(textId)!;
+  const section = box.closest(".doc") as HTMLElement;
+  if (text?.trim()) renderRules(box, text);
+  else box.replaceChildren();
+  section.hidden = !text?.trim();
 }
 function showResult(data: Record<string, any>) {
   result.replaceChildren();
-  const heading = document.createElement("h2");
-  heading.textContent = `Market #${data.market_id}`;
+  const heading = el("h2", undefined, `Market #${data.market_id} created`);
   result.append(heading);
-  const status = document.createElement("p");
-  status.textContent = data.linked
-    ? "Linked to Noa Court"
-    : `Created; keeper will retry linking${data.link_error ? ` (${data.link_error})` : ""}`;
-  result.append(status);
-  for (const hash of [
+  result.append(
+    el(
+      "p",
+      "lead",
+      data.linked
+        ? "Your market is live and linked to Noa Court."
+        : `Your market was created. Linking it to Noa Court will be retried automatically${data.link_error ? ` (${data.link_error})` : ""}.`,
+    ),
+  );
+  const hashes = [
     ...(data.tx_hashes || []),
     ...(data.link_tx_hash ? [data.link_tx_hash] : []),
-  ]) {
-    const p = document.createElement("p");
-    const a = document.createElement("a");
-    a.href = `https://testnet.nearblocks.io/txns/${encodeURIComponent(hash)}`;
-    a.textContent = `Transaction ${hash}`;
-    a.target = "_blank";
-    a.rel = "noopener noreferrer";
-    p.append(a);
-    result.append(p);
+  ];
+  if (hashes.length) {
+    const list = el("ul", "txs");
+    for (const hash of hashes) {
+      const li = el("li");
+      const a = el("a", undefined, `Transaction ${hash}`);
+      a.href = `https://testnet.nearblocks.io/txns/${encodeURIComponent(hash)}`;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      li.append(a);
+      list.append(li);
+    }
+    result.append(list);
   }
 }
 
@@ -149,17 +254,19 @@ async function getJson(url: string, init?: RequestInit) {
 }
 
 const STATE_TEXT: Record<string, string> = {
-  not_started: "Metadata not published yet",
-  auth_required: "Noa login needed to publish metadata",
-  publishing: "Publishing metadata to Noa…",
-  awaiting_verification: "Published; waiting for Noa read-back to confirm",
-  published: "Metadata published and verified on Noa",
-  retryable_error: "Metadata publication failed; you can retry",
+  not_started: "The description and rules have not been published to Noa yet.",
+  auth_required:
+    "Sign in with your wallet to publish the description and rules to Noa.",
+  publishing: "Publishing the description and rules to Noa…",
+  awaiting_verification:
+    "Published. Waiting for Noa to confirm it holds the exact text.",
+  published: "Published on Noa and verified against the terms above.",
+  retryable_error: "Publishing to Noa failed. You can retry.",
   conflict:
-    "Noa holds different metadata for this market; stopped (write-once)",
+    "Noa already holds different text for this market, so publishing stopped. Noa metadata is write-once and cannot be overwritten.",
   legacy_unavailable:
-    "Legacy request without a reviewed metadata snapshot; not published automatically",
-  disabled: "Metadata publication is not configured on this deployment",
+    "This is a legacy request with no reviewed description, so nothing was published to Noa automatically.",
+  disabled: "Publishing to Noa is not configured on this deployment.",
 };
 const publicationBox = document.getElementById("publication")!;
 const banner = document.getElementById("banner")!;
@@ -171,12 +278,13 @@ function renderPublication(
   onRetry?: () => void,
 ) {
   publicationBox.replaceChildren();
-  const heading = document.createElement("h3");
-  heading.textContent = "Noa metadata";
+  const heading = document.createElement("h2");
+  heading.textContent = "Publication on Noa";
   const text = document.createElement("p");
   text.textContent = `${STATE_TEXT[view.state] ?? view.state}${view.error ? ` (${view.error})` : ""}${extra ? ` ${extra}` : ""}`;
   if (["conflict", "retryable_error"].includes(view.state))
     text.className = "error";
+  publicationBox.setAttribute("aria-live", "polite");
   publicationBox.append(heading, text);
   if (view.state === "published" && view.market_url) {
     const p = document.createElement("p");
@@ -190,7 +298,7 @@ function renderPublication(
   }
   if (view.last_verified_at && view.state === "published") {
     const p = document.createElement("small");
-    p.textContent = `Last verified ${view.last_verified_at}`;
+    p.textContent = `Last verified ${formatUtc(view.last_verified_at)}`;
     publicationBox.append(p);
   }
   const canRetry =
@@ -204,8 +312,8 @@ function renderPublication(
     publicationButton.type = "button";
     publicationButton.textContent =
       view.state === "not_started"
-        ? "Publish metadata to Noa"
-        : "Retry metadata publication";
+        ? "Publish description and rules to Noa"
+        : "Retry publishing to Noa";
     publicationButton.onclick = onRetry;
     publicationBox.append(publicationButton);
   }
@@ -214,18 +322,18 @@ function renderPublication(
 function banners(view: PublicationView) {
   banner.replaceChildren();
   const add = (message: string, bad = false) => {
-    const div = document.createElement("div");
-    div.className = bad ? "banner bad" : "banner";
-    div.textContent = message;
+    const div = el("p", bad ? "banner bad" : "banner");
+    div.append(el("strong", undefined, bad ? "Cannot continue. " : "Note. "), message);
+    if (bad) div.setAttribute("role", "alert");
     banner.append(div);
   };
   if (view.config_status === "disabled")
     add(
-      "Metadata publication not configured on this deployment: the market will be created without a Noa description or rules.",
+      "Publishing to Noa is not set up on this deployment, so the market will be created without a Noa description or rules.",
     );
   if (view.config_status === "invalid")
     add(
-      `Metadata publication configuration is invalid; new markets cannot be created from this deployment: ${view.config_error}`,
+      `Publishing to Noa is misconfigured on this deployment, so new markets cannot be created from it. Details: ${view.config_error}`,
       true,
     );
 }
@@ -235,47 +343,109 @@ async function main() {
   try {
     request = await getJson(`/api/sign/${encodeURIComponent(id)}`);
   } catch (error) {
-    state.textContent = (error as Error).message.includes("expired")
-      ? "expired"
-      : "not found";
+    details.replaceChildren();
+    details.removeAttribute("aria-busy");
+    if ((error as Error).message.includes("expired"))
+      setStatus(
+        "This signing link has expired. Ask your AI agent for a new one.",
+        "bad",
+      );
+    else
+      setStatus(
+        "We could not find this signing request. Check the link, or ask your AI agent for a new one.",
+        "bad",
+      );
     button?.remove();
     return;
   }
-  state.textContent = request.status;
+  const statusText: Record<string, [string, Tone]> = {
+    pending: [
+      "Waiting for your signature. Nothing is created until you approve in your wallet.",
+      "info",
+    ],
+    completed: ["Signed and confirmed on-chain.", "ok"],
+    expired: [
+      "This signing link has expired. Ask your AI agent for a new one.",
+      "bad",
+    ],
+  };
+  const [initialText, initialTone] = statusText[request.status] ?? [
+    request.status,
+    "info",
+  ];
+  setStatus(initialText, initialTone);
   let publication = request.publication;
-  banners(publication);
+  if (request.status === "pending") banners(publication);
   if (publication.config_status === "invalid") button?.remove();
-  fact("Outcomes", chips(request.params.outcomes), true);
-  fact(
-    "Stake",
-    `${request.params.stake} ${request.params.token_id || "NPOINT"}`,
+  details.replaceChildren();
+  details.removeAttribute("aria-busy");
+  const summary = request.spec_summary;
+  const question = summary?.question;
+  if (question) term("Question", question);
+  term("Outcomes", words(request.params.outcomes));
+  const decision = decisionLine(request.rules_markdown);
+  if (decision) term("How it resolves", decision);
+  const observation = summary?.observation;
+  if (observation?.at) {
+    const wrap = el("span");
+    wrap.append(timeNode(observation.at));
+    const bits = [
+      observation.mode,
+      observation.max_delay ? `max delay ${observation.max_delay}` : "",
+    ].filter(Boolean);
+    if (bits.length) wrap.append(el("span", "dim", ` · ${bits.join(", ")}`));
+    term("Observed at", wrap);
+  }
+  if (summary?.sources?.length) {
+    const list = el("ul", "sources");
+    for (const source of summary.sources) {
+      const li = el("li", undefined, source.id);
+      li.append(el("span", "dim", ` ${source.tool}`));
+      list.append(li);
+    }
+    term("Sources", list);
+  }
+  const stake = el("span");
+  stake.append(
+    el("strong", undefined, request.params.stake),
+    el("span", "dim", ` ${request.params.token_id || "NPOINT"}`),
   );
-  if (request.sign_before)
-    fact(
-      "Sign before",
-      new Date(request.sign_before)
-        .toISOString()
-        .replace("T", " ")
-        .slice(0, 16) + " UTC",
-    );
-  if (request.spec_hash) hashFact("Spec hash", request.spec_hash);
-  if (request.metadata_digest) hashFact("Metadata digest", request.metadata_digest);
+  term("Stake", stake);
+  if (request.sign_before && request.status === "pending")
+    term("Sign before", timeNode(request.sign_before, true));
+  const verifyRows = document.getElementById("verify-rows")!;
+  if (request.spec_hash)
+    term("Spec hash", copyable(request.spec_hash), verifyRows);
+  if (request.metadata_digest)
+    term("Metadata digest", copyable(request.metadata_digest), verifyRows);
+  (document.getElementById("verify") as HTMLElement).hidden =
+    !verifyRows.childElementCount;
   // Display only: when the frozen description equals the rules, show the text once.
+  const rawRules = document.getElementById("rules-raw")!;
+  rawRules.textContent = request.rules_markdown;
   if (request.description === request.rules_markdown) {
     document.getElementById("rules-title")!.textContent = "Resolution rules";
     setDoc("description", null);
     setDoc("rules", request.rules_markdown);
   } else {
+    document.getElementById("rules-title")!.textContent = "Resolution rules";
     setDoc(
       "description",
       request.description ?? "(no reviewed description: legacy request)",
     );
     setDoc("rules", request.rules_markdown);
   }
-  const qr = document.getElementById("qr") as HTMLImageElement;
-  const qrData = await getJson(`/api/sign/${encodeURIComponent(id)}/qr`);
-  qr.src = qrData.qr_png_data_url;
-  qr.hidden = false;
+  const qr = document.getElementById("qr") as HTMLImageElement | null;
+  if (qr && request.status === "pending") {
+    try {
+      const qrData = await getJson(`/api/sign/${encodeURIComponent(id)}/qr`);
+      qr.src = qrData.qr_png_data_url;
+      qr.hidden = false;
+      (document.getElementById("phone") as HTMLElement).hidden = false;
+    } catch {
+      /* the phone affordance is optional */
+    }
+  }
 
   const publicationEnabled = publication.config_status === "enabled";
   const needsSelector =
@@ -339,7 +509,7 @@ async function main() {
     if (publicationButton) publicationButton.disabled = true;
     if (session && session.accountId !== activeAccount()) session = null;
     if (!activeAccount() && connector) {
-      state.textContent = "Connect the creator wallet to publish metadata";
+      setStatus("Connect your wallet to publish the description and rules to Noa.", "busy");
       await connectWallet();
     }
     try {
@@ -366,7 +536,7 @@ async function main() {
   async function connectWallet(): Promise<string> {
     let accountId = activeAccount();
     if (accountId) return accountId;
-    state.textContent = "Choose a wallet to continue";
+    setStatus("Choose a wallet in the window that opened.", "busy");
     const wallet = await connector!.connect();
     accounts = await wallet.getAccounts();
     accountId = activeAccount();
@@ -376,8 +546,7 @@ async function main() {
   const onCompleted = (data: Record<string, any>) => {
     showResult(data);
     button?.remove();
-    state.textContent = "completed";
-    state.className = "";
+    setStatus("Signed and confirmed on-chain.", "ok");
     // Refresh the server-side publication view (payload needs the trusted market id).
     return getJson(`/api/sign/${encodeURIComponent(id)}`)
       .then((fresh: PublicRequest) => {
@@ -452,17 +621,18 @@ async function main() {
       await onCompleted(verified);
       return;
     } catch (error) {
-      state.textContent = `Could not verify wallet return: ${(error as Error).message}`;
+      setStatus(`We could not verify the return from your wallet: ${(error as Error).message}`, "bad");
     }
   }
   button!.onclick = async () => {
     try {
       button!.disabled = true;
+      button!.textContent = "Waiting for wallet…";
       const accountId = await connectWallet();
       sessionStorage.setItem(`noacourt:${id}:account`, accountId);
       if (publicationEnabled && publication.noa) {
         // Noa login BEFORE any create transaction: declined/unsupported wallets stop here.
-        state.textContent = "Sign the Noa login message in your wallet…";
+        setStatus("Approve the Noa sign-in message in your wallet. It proves you own the account and costs nothing.", "busy");
         try {
           session = await noaLogin(deps, {
             apiUrl: publication.noa.api_url,
@@ -476,11 +646,12 @@ async function main() {
           );
         }
       }
-      state.textContent = "Preparing transactions…";
+      setStatus("Preparing your transactions…", "busy");
       const plan = await getJson(
         `/api/sign/${encodeURIComponent(id)}/plan?account=${encodeURIComponent(accountId)}`,
       );
       const wallet = await connector!.wallet();
+      setStatus("Approve the transactions in your wallet. Check the amounts there before confirming.", "busy");
       const outcomes = await (wallet as any).signAndSendTransactions({
         transactions: plan.tx_plan,
         network: request.network.networkId,
@@ -492,7 +663,7 @@ async function main() {
         const value = outcomes.at(-1)?.status?.SuccessValue;
         if (value) {
           try {
-            state.textContent = `Wallet reported market #${JSON.parse(atob(value)).market_id}; verifying…`;
+            setStatus(`Your wallet reported market #${JSON.parse(atob(value)).market_id}. Confirming on-chain…`, "busy");
           } catch {
             /* server verifies result */
           }
@@ -507,19 +678,22 @@ async function main() {
         );
         await onCompleted(verified);
       } else
-        state.textContent =
-          "Approve transactions in your wallet, then return here";
+        setStatus("Approve the transactions in your wallet, then return to this page.", "busy");
     } catch (error) {
-      state.textContent = (error as Error).message;
-      state.className = "error";
+      setStatus(`Could not finish signing: ${(error as Error).message}. You can try again.`, "bad");
       if ((error as Error & { status?: number }).status === 409)
         button?.remove();
     } finally {
-      if (button) button.disabled = false;
+      if (button) {
+        button.disabled = false;
+        button.textContent = "Connect wallet and sign";
+      }
     }
   };
 }
 void main().catch((error) => {
-  state.textContent = `Sign page unavailable: ${error.message}`;
+  details.replaceChildren();
+  details.removeAttribute("aria-busy");
+  setStatus(`This page could not load: ${error.message}. Reload to try again.`, "bad");
   button?.remove();
 });
