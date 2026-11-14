@@ -12,6 +12,8 @@ import type { NearRpc } from "../src/near/rpc.js";
 import type { CourtClient } from "../src/court/client.js";
 
 const dir = mkdtempSync(join(tmpdir(), "noacourt-mcp-"));
+const browserUserAgent =
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
 const wasmPath = join(dir, "resolver.wasm");
 writeFileSync(wasmPath, "fake-wasm");
 writeFileSync(
@@ -148,6 +150,63 @@ afterAll(async () => {
 });
 
 describe("MCP HTTP", () => {
+  it("returns JSON discovery without changing stateless MCP method handling", async () => {
+    const home = await fetch(`${base}/`, {
+      headers: { "user-agent": browserUserAgent },
+    });
+    expect(home.status).toBe(200);
+    expect(home.headers.get("content-type")).toContain("application/json");
+    const discovery = await home.json();
+    expect(discovery.name).toBe("Noa Court");
+    expect(discovery.mcp_endpoint).toBe(
+      "https://noacourtmcp.junstudio.xyz/mcp",
+    );
+    expect(discovery.start_here).toContain("court_guide");
+    expect(discovery.docs.integration).toBe(
+      "https://noacourtmcp.junstudio.xyz/docs/INTEGRATE.md",
+    );
+    expect(discovery.docs.near_tokens).toBe(
+      "https://noacourtmcp.junstudio.xyz/docs/NEAR_TOKENS.md",
+    );
+    for (const name of [
+      "README.md",
+      "MCP.md",
+      "ARCHITECTURE.md",
+      "SPEC.md",
+      "INTEGRATE.md",
+      "NEAR_TOKENS.md",
+      "SKILL.md",
+    ]) {
+      const response = await fetch(`${base}/docs/${name}`, {
+        headers: { "user-agent": browserUserAgent },
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toContain("text/markdown");
+      expect((await response.text()).length).toBeGreaterThan(100);
+    }
+    const unknown = await fetch(`${base}/docs/unknown.md`, {
+      headers: { "user-agent": browserUserAgent },
+    });
+    expect(unknown.status).toBe(404);
+
+    for (const method of ["GET", "DELETE"] as const) {
+      const response = await fetch(`${base}/mcp`, {
+        method,
+        headers: { "user-agent": browserUserAgent },
+      });
+      expect(response.status).toBe(405);
+      const body = await response.json();
+      expect(body.error.code).toBe(-32000);
+      if (method === "GET") {
+        expect(body.error.data.docs.integration).toBe(
+          discovery.docs.integration,
+        );
+        expect(body.error.data.start_here).toContain("court_guide");
+        expect(body.error.data.mcp_endpoint).toBe(discovery.mcp_endpoint);
+        expect(body.error.data.transport).toContain("POST");
+      }
+    }
+  });
   it("serves fresh fixture GET and HEAD responses without cache validators", async () => {
     const fixture = join(dir, "fixtures", "score.json");
     writeFileSync(fixture, '{"score":1}');
@@ -198,7 +257,6 @@ describe("MCP HTTP", () => {
     symlinkSync(outside, join(dir, "fixtures", "escape.txt"));
     for (const name of [
       ".hidden.json",
-      "..",
       "bad%2Fname.json",
       "score.exe",
       "missing.json",
@@ -284,15 +342,20 @@ describe("MCP HTTP", () => {
     }
   });
   it("returns guide and unknown catalog error", async () => {
-    expect((await tool("court_guide", {})).content[0].text).toContain(
-      "Find an official or first-party source first",
-    );
+    const guide = (await tool("court_guide", {})).content[0].text;
+    expect(guide).toContain("Find an official or first-party source first");
+    expect(guide).toContain("docs/NEAR_TOKENS.md");
+    expect(guide).toContain("A10_INTEAR_MC");
+    expect(guide).toContain("Single-source Intear or JustHoot");
     const entry = JSON.parse(
       (await tool("catalog_tool", { name: "http_json" })).content[0].text,
     );
     expect(
       entry.param_json_schema.properties.extract.properties.path.type,
     ).toBe("string");
+    expect(
+      entry.param_json_schema.properties.extract.properties.allow_index.type,
+    ).toBe("boolean");
     expect(entry.spec_retry_template).toEqual({ max_attempts: 5, every: "3m" });
     expect(entry.recommended_resolution_window_minutes).toBe(20);
     const missing = await tool("catalog_tool", { name: "nope" });

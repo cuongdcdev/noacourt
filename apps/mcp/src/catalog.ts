@@ -143,6 +143,9 @@ export const catalog: CatalogEntry[] = [
         path: "$.data.value",
         type: "int|decimal|bool|string|timestamp",
         decimals: 0,
+        allow_index: false,
+        index_reason:
+          "required when the documented response needs positional indexes",
       },
       sanity: { min: 0 },
     },
@@ -155,7 +158,7 @@ export const catalog: CatalogEntry[] = [
       extract: { path: "$.score", type: "int", decimals: 0 },
     },
     notes:
-      "RFC 9535 JSONPath by key; avoid positional indexes. No OAuth or pagination in v1.",
+      "RFC 9535 JSONPath by key. Positional extraction requires allow_index and index_reason plus assertions that pin the documented array shape. No OAuth or pagination in v1.",
   },
   {
     name: "rss_feed",
@@ -311,6 +314,8 @@ export const catalogParamSchemas: Record<string, ReturnType<typeof schema>> = {
           agg: { type: ["string", "null"] },
           type: { enum: ["int", "decimal", "bool", "string", "timestamp"] },
           decimals: { type: "integer", minimum: 0 },
+          allow_index: { type: "boolean" },
+          index_reason: string,
         },
         ["path", "type"],
       ),

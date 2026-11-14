@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "question": "Will Intear report HOOT market cap at or above USD 1,000,000 on its first valid indexed snapshot after 2026-12-31T23:10:00Z?",
+  "outcomes": ["Yes", "No"],
+  "observation": {
+    "at": "2026-12-31T23:10:00Z",
+    "baseline_at": null,
+    "mode": "first_fetch_after",
+    "max_delay": "30m"
+  },
+  "sources": [
+    {
+      "id": "intear_hoot_market_cap_usd",
+      "tool": "http_json",
+      "request": {
+        "method": "GET",
+        "url": "https://api.intea.rs/tokens?ids=hoot-8ecf65.launchpad.justhoot.near&fields=price_usd,market_cap_usd,fdv_usd"
+      },
+      "expect": {
+        "status": 200,
+        "as_of": "$.timestamp_millis",
+        "assert": [
+          "$.columns[0] == \"account_id\"",
+          "$.columns[1] == \"price_usd\"",
+          "$.columns[2] == \"market_cap_usd\"",
+          "$.columns[3] == \"fdv_usd\"",
+          "$.total == 1",
+          "$.missing == []",
+          "$.rows[0][0] == \"hoot-8ecf65.launchpad.justhoot.near\"",
+          "$.rows[0][1] > 0"
+        ]
+      },
+      "identity": "asserted",
+      "extract": {
+        "path": "$.rows[0][2]",
+        "type": "decimal",
+        "allow_index": true,
+        "index_reason": "Intear documents rows in requested column order; assertions pin the column names, single row, and token account ID."
+      },
+      "sanity": {
+        "min": 0
+      }
+    }
+  ],
+  "aggregate": {
+    "method": "primary_then_fallback"
+  },
+  "decide": {
+    "kind": "threshold",
+    "op": ">=",
+    "value": "1000000"
+  },
+  "outcome_map": {
+    "true": "Yes",
+    "false": "No"
+  },
+  "on_unavailable": "void",
+  "retry": {
+    "max_attempts": 5,
+    "every": "3m"
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "question": "Will JustHoot report HOOT price at or above USD 0.001 on its first valid snapshot after 2026-12-31T23:10:00Z?",
+  "outcomes": ["Yes", "No"],
+  "observation": {
+    "at": "2026-12-31T23:10:00Z",
+    "baseline_at": null,
+    "mode": "first_fetch_after",
+    "max_delay": "30m"
+  },
+  "sources": [
+    {
+      "id": "justhoot_hoot_price_usd",
+      "tool": "http_json",
+      "request": {
+        "method": "GET",
+        "url": "https://api.justhoot.fun/api/tokens/hoot-8ecf65.launchpad.justhoot.near"
+      },
+      "expect": {
+        "status": 200,
+        "assert": [
+          "$.token.id == \"hoot-8ecf65.launchpad.justhoot.near\"",
+          "$.price_usd > 0"
+        ]
+      },
+      "identity": "asserted",
+      "extract": {
+        "path": "$.price_usd",
+        "type": "decimal"
+      },
+      "sanity": {
+        "min": 0
+      }
+    }
+  ],
+  "aggregate": {
+    "method": "primary_then_fallback"
+  },
+  "decide": {
+    "kind": "threshold",
+    "op": ">=",
+    "value": "0.001"
+  },
+  "outcome_map": {
+    "true": "Yes",
+    "false": "No"
+  },
+  "on_unavailable": "void",
+  "retry": {
+    "max_attempts": 5,
+    "every": "3m"
+  }
+}

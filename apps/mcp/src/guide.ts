@@ -111,6 +111,73 @@ export function makeExamples(now: Date = new Date()) {
       outcome_map: { yes: "Yes", no: "No" },
       on_unavailable: "No",
     },
+    A10_INTEAR_MC: {
+      ...base,
+      question: `Will Intear report HOOT market cap at or above USD 1,000,000 on its first valid indexed snapshot after ${observationAt}?`,
+      observation: { ...base.observation, mode: "first_fetch_after" },
+      sources: [
+        {
+          id: "intear_hoot_market_cap_usd",
+          tool: "http_json",
+          request: {
+            method: "GET",
+            url: "https://api.intea.rs/tokens?ids=hoot-8ecf65.launchpad.justhoot.near&fields=price_usd,market_cap_usd,fdv_usd",
+          },
+          expect: {
+            status: 200,
+            as_of: "$.timestamp_millis",
+            assert: [
+              '$.columns[0] == "account_id"',
+              '$.columns[1] == "price_usd"',
+              '$.columns[2] == "market_cap_usd"',
+              '$.columns[3] == "fdv_usd"',
+              "$.total == 1",
+              "$.missing == []",
+              '$.rows[0][0] == "hoot-8ecf65.launchpad.justhoot.near"',
+              "$.rows[0][1] > 0",
+            ],
+          },
+          identity: "asserted",
+          extract: {
+            path: "$.rows[0][2]",
+            type: "decimal",
+            allow_index: true,
+            index_reason:
+              "Intear documents rows in requested column order; assertions pin the column names, single row, and token account ID.",
+          },
+          sanity: { min: 0 },
+        },
+      ],
+      aggregate: { method: "primary_then_fallback" },
+      decide: { kind: "threshold", op: ">=", value: "1000000" },
+    },
+    A11_JUSTHOOT_PRICE: {
+      ...base,
+      question: `Will JustHoot report HOOT price at or above USD 0.001 on its first valid snapshot after ${observationAt}?`,
+      observation: { ...base.observation, mode: "first_fetch_after" },
+      sources: [
+        {
+          id: "justhoot_hoot_price_usd",
+          tool: "http_json",
+          request: {
+            method: "GET",
+            url: "https://api.justhoot.fun/api/tokens/hoot-8ecf65.launchpad.justhoot.near",
+          },
+          expect: {
+            status: 200,
+            assert: [
+              '$.token.id == "hoot-8ecf65.launchpad.justhoot.near"',
+              "$.price_usd > 0",
+            ],
+          },
+          identity: "asserted",
+          extract: { path: "$.price_usd", type: "decimal" },
+          sanity: { min: 0 },
+        },
+      ],
+      aggregate: { method: "primary_then_fallback" },
+      decide: { kind: "threshold", op: ">=", value: "0.001" },
+    },
   };
 }
 
@@ -124,6 +191,8 @@ now_utc: ${new Date().toISOString()}.
 
 Flow: lint → simulate → rules_render → market_create_link → user signs in their wallet. The server never needs a creator private key. The sign link states a sign-before time, and its plan is recalculated when the user signs. Integration: docs/ARCHITECTURE.md §5–§7.
 
+Documentation: https://noacourtmcp.junstudio.xyz/docs/README.md (overview), https://noacourtmcp.junstudio.xyz/docs/MCP.md (MCP setup), https://noacourtmcp.junstudio.xyz/docs/SPEC.md (specification), https://noacourtmcp.junstudio.xyz/docs/ARCHITECTURE.md (architecture), https://noacourtmcp.junstudio.xyz/docs/INTEGRATE.md (integration), https://noacourtmcp.junstudio.xyz/docs/NEAR_TOKENS.md (NEAR token recipes), https://noacourtmcp.junstudio.xyz/docs/SKILL.md (agent skill).
+
 ## Drafting rules
 1. Find an official or first-party source first.
 2. Call the real endpoint with source_sample, show the creator a sample response, and explain the chosen fields.
@@ -132,7 +201,7 @@ Flow: lint → simulate → rules_render → market_create_link → user signs i
 5. Declare freshness using as_of, a {T} variable, or the first fetch after T.
 6. Declare the extracted type and decimals.
 7. Use explicit decide boundaries; outcome_map must cover missing/null through on_unavailable.
-8. Include a fallback source; it is mandatory for price markets.
+8. For dedicated price candle adapters, include two sources. For NEAR token price, market cap USD, or FDV USD through http_json, Single-source Intear or JustHoot is the default. Suggest a two-source median only when metric, unit, token identity, and supply definitions are equivalent and the creator chooses it. JustHoot does not expose FDV in the verified response.
 9. Simulate and show “if resolved now → X”.
 
 ## http_json contract
@@ -142,7 +211,9 @@ Source labels: verified for the allowlist; every other host is “self-declared,
 
 Catalog: ${catalog.map((tool) => `${tool.name} (${tool.kind}: ${tool.summary})`).join("; ")}.
 
-Decide kinds: threshold (>=, >, <=, <), buckets (half-open [lower, upper)), equals, bool, change (up/down/tie), text_judge (yes/no with criteria, window, and default_if_no_evidence set to the lowercase result key "yes" or "no"). Lint checks: observation after market close, bucket coverage, snapshot max_delay, two price sources, http_json identity, GitHub repo_id identity, outcome_map coverage, change baseline before observation, 2–10 outcomes.
+Decide kinds: threshold (>=, >, <=, <), buckets (half-open [lower, upper)), equals, bool, change (up/down/tie), text_judge (yes/no with criteria, window, and default_if_no_evidence set to the lowercase result key "yes" or "no"). Lint checks: observation after market close, bucket coverage, snapshot max_delay, two sources for dedicated price adapters, http_json identity, GitHub repo_id identity, outcome_map coverage, change baseline before observation, 2–10 outcomes.
+
+NEAR token snapshots: use full token contract account ID, not ticker. Intear /tokens is columnar: pin columns, one row, and account ID; extract an indexed row value only with allow_index and index_reason. Intear timestamp_millis can serve as as_of to reject an indexed snapshot before observation.at. Both providers must report positive price before accepting market cap or FDV. JustHoot last_trade_at is trade time, not response time. A snapshot market asks for the first valid value after T, never whether a metric was ever reached before T. On missing/unpriced data, retry then void under on_unavailable. Read docs/NEAR_TOKENS.md before drafting.
 
 Default retry policy: max_attempts 5, every 3m. The Court deadline floor is observation.at + 5 × 3m + 5m = 20 minutes after observation. The sign plan computes the window from its estimated market expiration to that deadline, with 2 extra minutes of margin. A shorter requested window is raised with a warning by market_create_link. Sign before the deadline on the sign page; a late plan is refused.
 

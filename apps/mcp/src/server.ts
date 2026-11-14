@@ -100,10 +100,64 @@ export type ServerDeps = {
   signer?: Pick<KeeperSigner, "send">;
   store?: SignStore;
 };
+const discovery = {
+  name: "Noa Court",
+  description:
+    "Testnet AI resolver for Noa markets. Draft and simulate a resolution spec, then let the creator sign with their own wallet.",
+  mcp_endpoint: "https://noacourtmcp.junstudio.xyz/mcp",
+  start_here:
+    "Connect an MCP client and call court_guide before drafting a market.",
+  workflow: [
+    "source_sample",
+    "spec_lint",
+    "spec_simulate",
+    "rules_render",
+    "market_create_link",
+    "creator signs with wallet",
+    "market_status",
+    "verdict_get",
+  ],
+  docs: {
+    overview: "https://noacourtmcp.junstudio.xyz/docs/README.md",
+    mcp: "https://noacourtmcp.junstudio.xyz/docs/MCP.md",
+    architecture: "https://noacourtmcp.junstudio.xyz/docs/ARCHITECTURE.md",
+    specification: "https://noacourtmcp.junstudio.xyz/docs/SPEC.md",
+    integration: "https://noacourtmcp.junstudio.xyz/docs/INTEGRATE.md",
+    near_tokens: "https://noacourtmcp.junstudio.xyz/docs/NEAR_TOKENS.md",
+    skill: "https://noacourtmcp.junstudio.xyz/docs/SKILL.md",
+  },
+};
+const docs = new Map([
+  ["README.md", new URL("../../../README.md", import.meta.url)],
+  ["MCP.md", new URL("../README.md", import.meta.url)],
+  [
+    "ARCHITECTURE.md",
+    new URL("../../../docs/ARCHITECTURE.md", import.meta.url),
+  ],
+  ["SPEC.md", new URL("../../../docs/SPEC.md", import.meta.url)],
+  ["INTEGRATE.md", new URL("../../../docs/INTEGRATE.md", import.meta.url)],
+  ["NEAR_TOKENS.md", new URL("../../../docs/NEAR_TOKENS.md", import.meta.url)],
+  ["SKILL.md", new URL("../../../skills/noa-court/SKILL.md", import.meta.url)],
+]);
+
 export function createApp(config: Config, deps: ServerDeps = {}) {
   const app = express();
   app.disable("x-powered-by");
   app.use(express.json({ limit: "1mb" }));
+  app.get("/", (_req, res) => res.json(discovery));
+  app.get("/docs/:name", async (req, res) => {
+    const file = docs.get(req.params.name);
+    if (!file) {
+      res.sendStatus(404);
+      return;
+    }
+    try {
+      const content = await readFile(file, "utf8");
+      res.type("text/markdown; charset=utf-8").send(content);
+    } catch {
+      res.sendStatus(404);
+    }
+  });
   const rpc = deps.rpc || new NearRpc(config);
   const court = deps.court || new CourtClient(config, rpc);
   const wasm = deps.wasm || new WasmRunner(config);
@@ -1113,7 +1167,23 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
         message: "Method not allowed in stateless MCP mode",
       },
     });
-  app.get("/mcp", unsupported);
+  app.get("/mcp", (_req, res) =>
+    res.status(405).json({
+      jsonrpc: "2.0",
+      id: null,
+      error: {
+        code: -32000,
+        message: "Method not allowed in stateless MCP mode",
+        data: {
+          mcp_endpoint: discovery.mcp_endpoint,
+          transport:
+            "Send MCP JSON-RPC requests using POST; GET is not supported in stateless mode.",
+          start_here: discovery.start_here,
+          docs: discovery.docs,
+        },
+      },
+    }),
+  );
   app.delete("/mcp", unsupported);
   return {
     app,

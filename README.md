@@ -10,6 +10,8 @@ Noa Court lets a market creator lock a resolution rule into a canonical JSON spe
 4. Read [E2E results](E2E_RESULTS.md) → inspect scenario outcomes, transaction hashes, and independent checks.
 5. Follow [integration steps](docs/INTEGRATE.md) → request a generic verdict or create a Noa market.
 
+For agents, read the [Noa Court skill](skills/noa-court/SKILL.md) ([hosted copy](https://noacourtmcp.junstudio.xyz/docs/SKILL.md)). For NEAR token price, market cap and FDV questions, follow the [Intear and JustHoot recipes](docs/NEAR_TOKENS.md) ([hosted copy](https://noacourtmcp.junstudio.xyz/docs/NEAR_TOKENS.md)); one source is the default, with a two-source median offered only as an optional choice.
+
 Live market ID: <!-- E2E:A1_ID -->67<!-- /E2E:A1_ID -->.
 
 ```sh
