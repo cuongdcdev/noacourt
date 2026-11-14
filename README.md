@@ -5,11 +5,7 @@
 
 ## Demo video (2 min)
 
-
-
-
-[![Noa Court demo: market resolved by Noa Court in an OutLayer TEE](<img width="2143" height="1289" alt="image" src="https://github.com/user-attachments/assets/505f2196-16e9-4f7a-b267-e2d791e8d7d1" />
-)](docs/media/noacourt-demo.mp4)
+<a href="docs/media/noacourt-demo.mp4"><img alt="Noa Court demo video: click to play" src="https://github.com/user-attachments/assets/505f2196-16e9-4f7a-b267-e2d791e8d7d1" /></a>
 
 ▶ [Watch the demo (MP4, 1:55)](docs/media/noacourt-demo.mp4): an agent drafts a market in plain words, the creator reviews and signs, and Court resolves it in the TEE.
 
