@@ -30,15 +30,15 @@ Local run against a Noa API on `http://localhost:3401` (frontend on 3411): `PUBL
 
 Publication states (`GET /api/sign/<id>` → `publication.state`, `market_status.metadata_publication`): `not_started`, `auth_required`, `publishing`, `awaiting_verification`, `published`, `retryable_error`, `conflict`, `legacy_unavailable`, `disabled`. `POST /api/sign/<id>/publication/verify` (no body, no token) reads the configured Noa market and compares description and rules byte-for-byte; only it can set `published`. `POST /api/sign/<id>/publication/report` lets the page persist progress with a fixed error code, never `published`. Noa metadata is write-once: identical retry is 200 `already_published`, different content is 409 (`conflict`, stop, never overwritten), a different account is 403. Recovery order: read-back first; missing leads to login (if needed) and the identical POST; 401 renews login once; 409/403 stop; 429/5xx/network get bounded backoff. Creation is never repeated. The reopened sign page of a completed request always shows the publication panel.
 
-Wallets: NEAR Connect with Intear (vendor-hosted executor), Meteor (extension, web and mobile app) and HOT Wallet (mainnet only; HOT has no testnet, so NEAR Connect hides it there) (self-hosted executors in `static/wallets/`, provenance in `static/wallets/SOURCES.md`). NEP-413 `signMessage` is called without `callbackUrl`, matching Noa's `callbackUrl: null` verification. A mobile/redirect wallet matrix is untested. Other wallets, metadata backfill of old markets and mainnet activation are out of scope.
+Wallets: NEAR Connect with Intear (vendor-hosted executor), Meteor (extension, web and mobile app) and HOT Wallet (mainnet only; HOT has no testnet, so NEAR Connect hides it there) (self-hosted executors in `static/wallets/`, provenance in `static/wallets/SOURCES.md`). NEP-413 `signMessage` is called without `callbackUrl`, matching Noa's `callbackUrl: null` verification. A mobile/redirect wallet matrix is untested. Other wallets and metadata backfill of old markets are out of scope. Mainnet is live at https://court.noamarket.xyz with publication enabled.
 
 `e2e/publish/run.ts <sign-request-id> <creator-key-file>` is a Node "stub wallet": it signs the Noa login with a testnet key file (read in-process, never printed), publishes through the same `noaPublish` module and calls the verify endpoint.
 
 ## MCP client setup
 
-- Codex: `codex mcp add noacourt --url https://noacourtmcp.junstudio.xyz/mcp`. In `config.toml`, set `[mcp_servers.noacourt]` and `default_tools_approval_mode = "approve"`.
-- Claude.ai: add `https://noacourtmcp.junstudio.xyz/mcp` as a custom connector. Claude Code: `claude mcp add --transport http noacourt https://noacourtmcp.junstudio.xyz/mcp`.
-- ChatGPT: enable developer mode and add a connector with URL `https://noacourtmcp.junstudio.xyz/mcp`, without authentication.
+- Codex: `codex mcp add noacourt --url https://court.noamarket.xyz/mcp`. In `config.toml`, set `[mcp_servers.noacourt]` and `default_tools_approval_mode = "approve"`.
+- Claude.ai: add `https://court.noamarket.xyz/mcp` as a custom connector. Claude Code: `claude mcp add --transport http noacourt https://court.noamarket.xyz/mcp`.
+- ChatGPT: enable developer mode and add a connector with URL `https://court.noamarket.xyz/mcp`, without authentication.
 
 The keeper's normal permissionless calls are Court `link_market`, `trigger`, `trigger_request`, `retry_forward`, `void`, `void_unlinked`, and Noa `finalize_resolution`. `submit_keeper_verdict` is used only with `COURT_TRUSTED_KEEPER=1`. Its receipt is marked `tee: false` by Court.
 

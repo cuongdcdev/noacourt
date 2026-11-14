@@ -155,10 +155,10 @@ For a market created in another UI or by CLI with a different or empty `metadata
 
 ## MCP for agents
 
-The public endpoint is `https://noacourtmcp.junstudio.xyz/mcp` (stateless Streamable HTTP, no auth, about 60 requests/minute/IP); `https://noacourtmcp.junstudio.xyz/healthz` reports service health. Add it in Claude Code with:
+The public endpoint is `https://court.noamarket.xyz/mcp` (stateless Streamable HTTP, no auth, about 60 requests/minute/IP); `https://court.noamarket.xyz/healthz` reports service health. The testnet staging instance is `https://noacourtmcp.junstudio.xyz/mcp`. Add it in Claude Code with:
 
 ```sh
-claude mcp add --transport http noacourt https://noacourtmcp.junstudio.xyz/mcp
+claude mcp add --transport http noacourt https://court.noamarket.xyz/mcp
 ```
 
 In Claude.ai or ChatGPT custom connectors, enter the same MCP URL. Availability of custom connectors depends on the client account and settings.

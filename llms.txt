@@ -1,9 +1,9 @@
 # Noa Court
 
-> Noa Court is a testnet NEAR resolution service for prediction markets and other contracts. Agents draft a canonical ResolutionSpec, sample and preflight evidence with MCP, then a creator signs market transactions or a consumer requests a generic verdict. The Court contract stores specs and receipts, while the resolver fetches, extracts, and decides through OutLayer. The normal keeper only calls permissionless lifecycle methods. Testnet fallback receipts have `tee: false`; inspect each receipt.
+> Noa Court is a NEAR mainnet resolution service for prediction markets and other contracts. Agents draft a canonical ResolutionSpec, sample and preflight evidence with MCP, then a creator signs market transactions or a consumer requests a generic verdict. The Court contract stores specs and receipts, while the resolver fetches, extracts, and decides through OutLayer. The normal keeper only calls permissionless lifecycle methods. Mainnet is TEE-only (`trusted_keeper: null`); the testnet staging instance has a fallback whose receipts have `tee: false`. Inspect each receipt.
 
-MCP (stateless Streamable HTTP, no auth, rate limited): https://noacourtmcp.junstudio.xyz/mcp
-Health: https://noacourtmcp.junstudio.xyz/healthz
+MCP (stateless Streamable HTTP, no auth, rate limited): https://court.noamarket.xyz/mcp
+Health: https://court.noamarket.xyz/healthz
 
 ## Documentation
 
@@ -14,7 +14,15 @@ Health: https://noacourtmcp.junstudio.xyz/healthz
 - [E2E results](https://github.com/cuongdcdev/noacourt/blob/main/E2E_RESULTS.md): all first-wave scenarios passed on testnet, with receipts and independent checks.
 - [Court contract interface](https://github.com/cuongdcdev/noacourt/blob/main/contracts/court/README.md): exact arguments, gas, deposits, and states.
 
-## Testnet IDs
+## Mainnet IDs (live 2026-11-14)
+
+- Court: `ai-resolver.noamarket.near` (owner/keeper `court-ops.noamarket.near`, treasury `treasury.noamarket.near`); `trusted_keeper: null`
+- Noa market: `v3.noamarket.near` (app https://noamarket.xyz); default token `npoint.noamarket.near`
+- OutLayer: `outlayer.near`, project `court-ops.noamarket.near/court-resolver`
+- Resolver WASM SHA-256: `39e5a6ceb7160e1b8eda6f294ff249d00dfe7d250f088848fb64ea1f0c3f6d8c`
+- No mainnet market has been created or resolved through Court yet; all evidence below is from testnet.
+
+## Testnet IDs (staging: https://noacourtmcp.junstudio.xyz/mcp)
 
 - Court: `ai-resolver.noamarket.testnet`
 - Noa market: `v3.noamarket.testnet`
@@ -24,7 +32,7 @@ Health: https://noacourtmcp.junstudio.xyz/healthz
 - Retry defaults: five attempts every three minutes. Noa's resolution deadline must extend at least five more minutes beyond `observation.at + max_attempts × retry.every` (20 minutes with defaults); MCP computes the window.
 - Pinned testnet resolver WASM SHA-256: `a8efb56c2f9fe31c2d857686d8b97179b15d8529a17984bfd31fc3f97ef6ce40`.
 
-## Live evidence
+## Verified on testnet
 
 - [A1 NEAR/USDT market 67](https://testnet.nearblocks.io/txns/GtfMBy2GmCKKNLjBGbNm7Wppf3VTnZ8ydB92bMrBsDWs): resolved No on attempt 2; `tee: true`, submitted by OutLayer. Query Court `get_verdict({"id":"noa:67"})` for the stored receipt.
 - [A8 RSS text-judge market 79](https://testnet.nearblocks.io/txns/7JnWtdYRhPK5muTsUMC27Bg8nyhd8zBFNsTXhFGR28DL): 15-minute market with [Yes](https://testnet.nearblocks.io/txns/7tNvi2wiReAeSjpUnRemSc1pHhqCzsjmHQqwBjr9toUj) and [No](https://testnet.nearblocks.io/txns/2WKsnVpmNtyc2Rwd1sturW1HCntjTshMHEnhWRuVqaKP) bets; three jurors agreed on Yes in the TEE, `tee: true`; [finalized](https://testnet.nearblocks.io/txns/5YESzkVyunsctNaPLPAEypvUonT9NHxfgH8qGyLHbdiL) and [claimed](https://testnet.nearblocks.io/txns/FiUEfZpBLifAVS6r9d3bTfrWWwy1EQsKaniCENHFAkHN). Query `get_verdict({"id":"noa:79"})`.

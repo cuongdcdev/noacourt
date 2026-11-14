@@ -5,7 +5,7 @@ description: Draft, simulate, and inspect Noa Court prediction-market resolution
 
 # Noa Court
 
-Connect to `https://noacourtmcp.junstudio.xyz/mcp` and call `court_guide` first. The service root returns JSON discovery and documentation links. The current Court deployment is testnet; tokens observed by a source may be NEAR mainnet tokens. Keep those two networks distinct.
+Connect to `https://court.noamarket.xyz/mcp` and call `court_guide` first. The service root returns JSON discovery and documentation links. The service runs on NEAR mainnet (Court `ai-resolver.noamarket.near`, Noa `v3.noamarket.near`). A testnet staging instance exists at `https://noacourtmcp.junstudio.xyz/mcp`; keep the two networks distinct and check `network` in the tool responses.
 
 ## Workflow
 
@@ -17,15 +17,15 @@ Connect to `https://noacourtmcp.junstudio.xyz/mcp` and call `court_guide` first.
 
 ## NEAR tokens
 
-Read [NEAR token recipes](https://noacourtmcp.junstudio.xyz/docs/NEAR_TOKENS.md) for Intear and JustHoot source selection, field mappings and assertions.
+Read [NEAR token recipes](https://court.noamarket.xyz/docs/NEAR_TOKENS.md) for Intear and JustHoot source selection, field mappings and assertions.
 
 Default to one source, Intear OR JustHoot, including price. Suggest a two-source median only as an optional creator choice after checking compatible metrics and units and explaining the resolver's partial-source behavior. Do not silently require two sources or substitute FDV for market cap. These current-value endpoints support snapshots after T, not “ever reached before T.” Missing pricing must not become a false No.
 
 ## References
 
-- [MCP connection and operations](https://noacourtmcp.junstudio.xyz/docs/MCP.md)
-- [ResolutionSpec reference](https://noacourtmcp.junstudio.xyz/docs/SPEC.md)
-- [Architecture](https://noacourtmcp.junstudio.xyz/docs/ARCHITECTURE.md)
-- [External consumer integration](https://noacourtmcp.junstudio.xyz/docs/INTEGRATE.md)
+- [MCP connection and operations](https://court.noamarket.xyz/docs/MCP.md)
+- [ResolutionSpec reference](https://court.noamarket.xyz/docs/SPEC.md)
+- [Architecture](https://court.noamarket.xyz/docs/ARCHITECTURE.md)
+- [External consumer integration](https://court.noamarket.xyz/docs/INTEGRATE.md)
 
 Use live MCP schemas/configuration and the current `court_guide` for parameters and timing. Replace example dates and thresholds before use. A dry run is a preview, not a future availability guarantee.
