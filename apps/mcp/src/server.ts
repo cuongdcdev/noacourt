@@ -292,6 +292,15 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
       maxAge: 0, // always revalidate (ETag) so a new sign.js reaches wallets immediately
     }),
   );
+  for (const [route, file] of [
+    ["/favicon.ico", "favicon.ico"],
+    ["/apple-touch-icon.png", "apple-icon.png"],
+  ] as const)
+    app.get(route, (_req, res) => {
+      res.sendFile(resolve(process.cwd(), "dist/public", file), (error) => {
+        if (error && !res.headersSent) res.status(404).end();
+      });
+    });
   app.get("/sign/:id", (req, res) => {
     const request = store.get(req.params.id);
     res

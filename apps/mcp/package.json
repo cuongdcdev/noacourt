@@ -16,20 +16,14 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json && pnpm build:page",
-    "build:page": "esbuild src/sign/page/main.ts --bundle --format=esm --platform=browser --target=es2022 --define:global=globalThis --inject:src/sign/page/process-shim.ts --alias:util=./node_modules/util/util.js --alias:buffer=./node_modules/buffer/index.js --outfile=dist/public/sign.js --minify",
+    "build:page": "esbuild src/sign/page/main.ts --bundle --format=esm --platform=browser --target=es2022 --define:global=globalThis --inject:src/sign/page/process-shim.ts --alias:util=./node_modules/util/util.js --alias:buffer=./node_modules/buffer/index.js --outfile=dist/public/sign.js --minify && cp -r static/. dist/public/",
     "start": "node dist/index.js",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@hot-labs/near-connect": "file:vendor/hot-labs-near-connect-0.11.5.tgz",
     "@modelcontextprotocol/sdk": "^1.24.0",
-    "@near-wallet-selector/core": "^10.1.4",
-    "@near-wallet-selector/hot-wallet": "^10.1.4",
-    "@near-wallet-selector/intear-wallet": "^10.1.4",
-    "@near-wallet-selector/meteor-wallet": "^10.1.4",
-    "@near-wallet-selector/meteor-wallet-app": "^10.1.4",
-    "@near-wallet-selector/modal-ui": "^10.1.4",
-    "@near-wallet-selector/my-near-wallet": "^10.1.4",
     "buffer": "^6.0.3",
     "canonicalize": "^2.1.0",
     "dotenv": "^17.2.3",

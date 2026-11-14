@@ -1,11 +1,6 @@
-import "@near-wallet-selector/modal-ui/styles.css";
-import { setupWalletSelector } from "@near-wallet-selector/core";
-import { setupModal } from "@near-wallet-selector/modal-ui";
-import { setupMyNearWallet } from "@near-wallet-selector/my-near-wallet";
-import { setupMeteorWallet } from "@near-wallet-selector/meteor-wallet";
-import { setupIntearWallet } from "@near-wallet-selector/intear-wallet";
-import { setupMeteorWalletApp } from "@near-wallet-selector/meteor-wallet-app";
-import { setupHotWallet } from "@near-wallet-selector/hot-wallet";
+import "./theme.js";
+import { NearConnector } from "@hot-labs/near-connect";
+import { WALLET_MANIFEST } from "./manifest.js";
 import { Buffer } from "buffer";
 import {
   recoverPublication,
@@ -62,12 +57,58 @@ const button = document.getElementById(
   "sign-button",
 ) as HTMLButtonElement | null;
 
-function line(label: string, value: string) {
-  const p = document.createElement("p");
-  const strong = document.createElement("strong");
-  strong.textContent = `${label}: `;
-  p.append(strong, document.createTextNode(value));
-  details.append(p);
+function fact(label: string, value: Node | string, wide = false) {
+  const box = document.createElement("div");
+  box.className = wide ? "fact wide" : "fact";
+  const k = document.createElement("div");
+  k.className = "k";
+  k.textContent = label;
+  const v = document.createElement("div");
+  v.className = "v";
+  v.append(value);
+  box.append(k, v);
+  details.append(box);
+}
+function chips(values: string[]) {
+  const wrap = document.createElement("div");
+  wrap.className = "chips";
+  for (const value of values) {
+    const c = document.createElement("span");
+    c.className = "chip";
+    c.textContent = value;
+    wrap.append(c);
+  }
+  return wrap;
+}
+function hashFact(label: string, value: string) {
+  const wrap = document.createElement("div");
+  wrap.className = "mono";
+  const code = document.createElement("code");
+  code.textContent = value;
+  code.title = value;
+  const copy = document.createElement("button");
+  copy.type = "button";
+  copy.className = "copy";
+  copy.textContent = "Copy";
+  copy.onclick = () => {
+    void navigator.clipboard?.writeText(value).then(() => {
+      copy.textContent = "Copied";
+      setTimeout(() => (copy.textContent = "Copy"), 1500);
+    }, () => undefined);
+  };
+  wrap.append(code, copy);
+  fact(label, wrap, true);
+}
+// Mirror the state text into a data attribute so CSS can colour the status pill.
+const KNOWN_STATUS = ["pending", "completed", "expired", "not found"];
+new MutationObserver(() => {
+  const text = state.textContent ?? "";
+  state.dataset.status = KNOWN_STATUS.includes(text) ? text : "msg";
+}).observe(state, { childList: true, characterData: true, subtree: true });
+function setDoc(textId: string, text: string | null | undefined) {
+  const pre = document.getElementById(textId)!;
+  pre.textContent = text ?? "";
+  (pre.closest(".doc") as HTMLElement).hidden = !text?.trim();
 }
 function showResult(data: Record<string, any>) {
   result.replaceChildren();
@@ -204,24 +245,33 @@ async function main() {
   let publication = request.publication;
   banners(publication);
   if (publication.config_status === "invalid") button?.remove();
-  line("Outcomes", request.params.outcomes.join(" · "));
-  line(
+  fact("Outcomes", chips(request.params.outcomes), true);
+  fact(
     "Stake",
     `${request.params.stake} ${request.params.token_id || "NPOINT"}`,
   );
   if (request.sign_before)
-    line(
+    fact(
       "Sign before",
       new Date(request.sign_before)
         .toISOString()
         .replace("T", " ")
         .slice(0, 16) + " UTC",
     );
-  if (request.spec_hash) line("Spec hash", request.spec_hash);
-  if (request.metadata_digest) line("Metadata digest", request.metadata_digest);
-  document.getElementById("description")!.textContent =
-    request.description ?? "(no reviewed description: legacy request)";
-  document.getElementById("rules")!.textContent = request.rules_markdown;
+  if (request.spec_hash) hashFact("Spec hash", request.spec_hash);
+  if (request.metadata_digest) hashFact("Metadata digest", request.metadata_digest);
+  // Display only: when the frozen description equals the rules, show the text once.
+  if (request.description === request.rules_markdown) {
+    document.getElementById("rules-title")!.textContent = "Resolution rules";
+    setDoc("description", null);
+    setDoc("rules", request.rules_markdown);
+  } else {
+    setDoc(
+      "description",
+      request.description ?? "(no reviewed description: legacy request)",
+    );
+    setDoc("rules", request.rules_markdown);
+  }
   const qr = document.getElementById("qr") as HTMLImageElement;
   const qrData = await getJson(`/api/sign/${encodeURIComponent(id)}/qr`);
   qr.src = qrData.qr_png_data_url;
@@ -241,17 +291,15 @@ async function main() {
     return;
 
   let session: NoaSession | null = null;
-  let selector: Awaited<ReturnType<typeof setupWalletSelector>> | null = null;
-  const activeAccount = () => {
-    const accounts = selector?.store.getState().accounts ?? [];
-    return (accounts.find((a: any) => a.active) ?? accounts[0])?.accountId;
-  };
+  let connector: NearConnector | null = null;
+  let accounts: { accountId: string }[] = [];
+  const activeAccount = () => accounts[0]?.accountId;
   const signMessage = async (params: {
     message: string;
     recipient: string;
     nonce: Uint8Array;
   }) => {
-    const wallet = (await selector!.wallet()) as any;
+    const wallet = (await connector!.wallet()) as any;
     if (typeof wallet.signMessage !== "function")
       throw new Error("signMessage is not supported");
     // callbackUrl intentionally omitted: Noa verifies NEP-413 with callbackUrl = null.
@@ -290,7 +338,7 @@ async function main() {
       return;
     if (publicationButton) publicationButton.disabled = true;
     if (session && session.accountId !== activeAccount()) session = null;
-    if (!activeAccount() && selector) {
+    if (!activeAccount() && connector) {
       state.textContent = "Connect the creator wallet to publish metadata";
       await connectWallet();
     }
@@ -319,25 +367,10 @@ async function main() {
     let accountId = activeAccount();
     if (accountId) return accountId;
     state.textContent = "Choose a wallet to continue";
-    const signedIn = new Promise<string>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        subscription.unsubscribe();
-        reject(new Error("Wallet sign-in timed out"));
-      }, 120_000);
-      const subscription = selector!.on(
-        "signedIn",
-        (event: { accounts: { accountId: string }[] }) => {
-          clearTimeout(timeout);
-          subscription.unsubscribe();
-          const account = event.accounts[0]?.accountId;
-          account
-            ? resolve(account)
-            : reject(new Error("Wallet returned no account"));
-        },
-      );
-    });
-    modal.show();
-    accountId = await signedIn;
+    const wallet = await connector!.connect();
+    accounts = await wallet.getAccounts();
+    accountId = activeAccount();
+    if (!accountId) throw new Error("Wallet returned no account");
     return accountId;
   }
   const onCompleted = (data: Record<string, any>) => {
@@ -357,28 +390,26 @@ async function main() {
   };
 
   if (needsSelector) {
-    // MyNearWallet cannot be relied on for NEP-413 login; keep it only when publication is off.
-    const modules: any[] = [
-      setupIntearWallet(),
-      setupMeteorWallet(),
-      setupMeteorWalletApp({
-        contractId: request.network.courtContract,
-      } as any),
-      setupHotWallet(),
-    ];
-    if (!publicationEnabled) modules.push(setupMyNearWallet());
-    selector = await setupWalletSelector({
-      network: request.network,
-      modules,
-    } as any);
-    selector.store.observable.subscribe(() => {
-      // Account switch: discard the Noa session.
+    connector = new NearConnector({
+      network: request.network.networkId,
+      manifest: WALLET_MANIFEST as any,
+    });
+    const onSignOut = () => {
+      // Account switch/sign-out: discard the Noa session.
+      accounts = [];
+      session = null;
+    };
+    connector.on("wallet:signIn", (event: any) => {
+      accounts = event.accounts ?? [];
       if (session && session.accountId !== activeAccount()) session = null;
     });
+    connector.on("wallet:signOut", onSignOut);
+    try {
+      accounts = await (await connector.wallet()).getAccounts();
+    } catch {
+      /* not signed in */
+    }
   }
-  const modal = needsSelector
-    ? setupModal(selector!, { contractId: request.network.courtContract })
-    : (null as never);
 
   if (request.status === "completed") {
     button?.remove();
@@ -449,10 +480,10 @@ async function main() {
       const plan = await getJson(
         `/api/sign/${encodeURIComponent(id)}/plan?account=${encodeURIComponent(accountId)}`,
       );
-      const wallet = await selector!.wallet();
+      const wallet = await connector!.wallet();
       const outcomes = await (wallet as any).signAndSendTransactions({
         transactions: plan.tx_plan,
-        callbackUrl: location.href,
+        network: request.network.networkId,
       });
       if (Array.isArray(outcomes)) {
         const tx_hashes = outcomes
