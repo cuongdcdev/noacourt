@@ -9,7 +9,7 @@ accepts a verdict only from the OutLayer callback and forwards it to the market.
 Noa market is the first integration. Any other contract can use the generic
 `request_resolution` / `get_verdict` interface (see `docs/INTEGRATE.md`).
 
-This file is the contract between components. Change it only through an OpenSpec change.
+This file is the contract between components. Live deployment: NEAR mainnet since 2026-11-14 (see §7).
 
 ## 1. Components
 
@@ -17,18 +17,19 @@ This file is the contract between components. Change it only through an OpenSpec
 |---|---|---|
 | `crates/court-core` | ResolutionSpec types, canonical hash, lint, source adapters, decide, Verdict | Rust lib (std) |
 | `resolver/` | `resolver.wasm`: wasm32-wasip2 binary wrapping court-core; reads input JSON on stdin, writes Verdict JSON on stdout | Rust |
-| `contracts/court` | Court contract deployed at `ai-resolver.noamarket.testnet` | Rust, near-sdk 5 |
+| `contracts/court` | Court contract deployed at `ai-resolver.noamarket.near` | Rust, near-sdk 5 |
 | `apps/mcp` | Remote MCP server + `/sign/<id>` page + keeper loop, served at `https://court.noamarket.xyz` | TypeScript, Node 22 |
-| `fixtures/` | Test evidence we control (published as GitHub gists) | JSON/RSS |
+| `fixtures/` | Test evidence we control, used by the testnet E2E scenarios A6–A9 (labelled `self_declared`) | JSON/RSS |
 
-Trust split (owner rule, kent-notes 2026-11-12): only fetch → extract → decide must be verifiable,
+Trust split: only fetch → extract → decide must be verifiable,
 so only that runs in OutLayer. Drafting, lint, simulation, sign links and the keeper run off-chain,
 and the keeper has no power over outcomes.
 
 ## 2. Flow
 
 ```
-create (one wallet approval, 2 txs batched by /sign page):
+create (creator signs on the /sign page; the server never holds creator keys):
+  tx0 (if needed) token.ft_transfer_call → Noa   fund the creator's stake in Noa
   tx1 Court.register_spec(spec_json)            + deposit (storage + prepaid resolve fee)
   tx2 Noa.create_market(..., resolver = Court, metadata_hash = "noacourt:<spec_hash>")
   then anyone (sign page, else keeper) calls Court.link_market(market_id)
@@ -42,7 +43,7 @@ resolve:
   resolved      → Noa.resolve_market(market_id, outcome_index) + 1 yocto
   retry_after   → schedule; keeper triggers again (max attempts from config)
   unresolvable  → mark; after Noa resolution_deadline anyone calls Court.void(market_id) → Noa.void_market
-  keeper → Noa.finalize_resolution(market_id) after dispute window
+  keeper → Noa.finalize_resolution(market_id) after Noa's dispute window (60 min on mainnet market #26)
 
 generic (non-Noa):
   caller → Court.request_resolution(spec_json, callback?) + deposit → request_id
@@ -160,12 +161,13 @@ request_resolution(spec_json, callback: Option<{contract_id, method}>) payable -
 trigger_request(request_id)                          // permissionless, generic
 views: get_spec(spec_hash), get_market(market_id), get_request(request_id), get_verdict(request_id|"noa:<id>"),
        get_config()
-owner: set_trusted_keeper(Option<AccountId>)  // TESTNET-ONLY fallback, see below
+owner: set_trusted_keeper(Option<AccountId>)  // testnet-only fallback; null on mainnet, see below
        set_resolver_source, set_secrets_ref, set_min_deposit, withdraw(token, amount) → treasury
 ```
 States per market/request: `Linked → Pending(attempt) → {Resolved | RetryScheduled(t) | Unresolvable} → Voided`.
 Testnet-only fallback: if `trusted_keeper` is set, that account may call `submit_keeper_verdict(id, verdict_json)`;
-the stored verdict gets `"tee": false` and receipts show "not TEE-attested". Must be unset (None) for mainnet.
+the stored verdict gets `"tee": false` and receipts show "not TEE-attested". On mainnet `get_config` returns
+`"trusted_keeper": null`, so the only way a verdict is stored is the OutLayer callback (`tee: true`).
 
 All verdicts (full Verdict JSON + OutLayer request info) are stored on-chain for the receipt.
 
@@ -184,16 +186,25 @@ All verdicts (full Verdict JSON + OutLayer request info) are stored on-chain for
 | `market_status` | Noa market + Court state + latest verdict |
 | `verdict_get` | receipt for a market or generic request |
 
-The server holds no user keys. Its own keeper key (`court-ops.noamarket.testnet`) can only call
-permissionless methods.
+The server holds no user keys. Its keeper key (`court-ops.noamarket.near`) is used only for
+permissionless calls (`link_market`, `trigger`, `trigger_request`, `retry_forward`, `void`, Noa `finalize_resolution`);
+it cannot choose an outcome.
 
-## 7. Networks and accounts (testnet phase)
+## 7. Networks and accounts
 
-| Role | Account |
-|---|---|
-| Noa market contract | `v3.noamarket.testnet` (owner `noamarket.testnet`) |
-| Court | `ai-resolver.noamarket.testnet` |
-| Keeper + OutLayer project owner | `court-ops.noamarket.testnet` |
-| Market token | `point.noamarket.testnet` (NPOINT, 18 decimals) |
-| Test creators/bettors | `user1..user5.noamarket.testnet` |
-| OutLayer | `outlayer.testnet`, API `https://testnet-api.outlayer.ai` |
+Mainnet is live since 2026-11-14. The testnet instance ran the E2E scenarios before launch and is now retired; its
+on-chain records remain on testnet.nearblocks.io.
+
+| Role | Mainnet (live) | Testnet (retired) |
+|---|---|---|
+| Noa market contract | `v3.noamarket.near` | `v3.noamarket.testnet` |
+| Court | `ai-resolver.noamarket.near` | `ai-resolver.noamarket.testnet` |
+| Owner, keeper and OutLayer project owner | `court-ops.noamarket.near` (treasury `treasury.noamarket.near`) | `court-ops.noamarket.testnet` |
+| Default market token | `npoint.noamarket.near` (any Noa-whitelisted token) | `point.noamarket.testnet` (NPOINT, 18 decimals) |
+| OutLayer | `outlayer.near`, project `court-ops.noamarket.near/court-resolver` | `outlayer.testnet` |
+| Pinned resolver | `39e5a6ce…3f6d8c` (bytes on FastFS) | `a8efb56c…` then `39e5a6ce…` |
+| `trusted_keeper` | `null` (TEE-only) | set (fallback receipts `tee: false`) |
+| MCP + sign page + keeper | `https://court.noamarket.xyz` | retired |
+
+Live values: Court `get_config` (max_attempts 5, outlayer_gas_tgas 200, min_deposit 0.1 NEAR, resolution_fee 0.05 NEAR,
+outlayer_deposit 0.02 NEAR, OutLayer limits 150 s / 128 MB on 2026-11-14) and `https://court.noamarket.xyz/healthz`.

@@ -32,8 +32,8 @@ MCP server ── creator signs ──► Court.register_spec ──► Noa.crea
   └── permissionless keeper ───────► Court.link_market ◄──────┘
                                      │ trigger after observation.at
                                      ▼
-                             outlayer.near (testnet: outlayer.testnet)
-                             configured resolver.wasm
+                             outlayer.near (OutLayer TEE)
+                             pinned resolver.wasm (39e5a6ce…)
                              fetch → extract → decide
                                      │ Verdict v1 callback
                                      ▼
@@ -41,7 +41,7 @@ MCP server ── creator signs ──► Court.register_spec ──► Noa.crea
                                      └─────────► generic callback / get_verdict
 ```
 
-The verifiable fetch, extract, and decide path runs in an OutLayer TEE for normal resolution. Drafting, source sampling, lint, simulation, wallet links, and the permissionless keeper run off chain. A keeper can trigger, link, retry, void, and finalize eligible operations; it cannot choose the outcome. Court validates the resolver's spec hash and outcome before recording a receipt. For text questions, the resolver asks three NEAR AI jurors to judge untrusted evidence and requires three valid agreeing votes. See the [spec reference](docs/SPEC.md) and [architecture](docs/ARCHITECTURE.md).
+The verifiable fetch, extract, and decide path runs in an OutLayer TEE. On mainnet it is the only path: Court's `trusted_keeper` is `null`, so a verdict is stored only from the OutLayer callback. Drafting, source sampling, lint, simulation, wallet links, and the permissionless keeper run off chain. A keeper can trigger, link, retry, void, and finalize eligible operations; it cannot choose the outcome. Court validates the resolver's spec hash and outcome before recording a receipt. For text questions, the resolver asks three NEAR AI jurors to judge untrusted evidence and requires three valid agreeing votes. See the [spec reference](docs/SPEC.md) and [architecture](docs/ARCHITECTURE.md).
 
 
 <img width="2344" height="1105" alt="image" src="https://github.com/user-attachments/assets/a417e6af-8b71-49b3-8c7c-30fb32d35bd3" />
@@ -60,6 +60,34 @@ Each step is "do X → see Y". No wallet or API key is needed.
 4. `cd apps/mcp && pnpm install && pnpm test` → 178 tests pass (MCP tools, sign page, keeper, Noa publication).
 5. `cd contracts/court && cargo test --lib` → 21 Court contract unit tests pass.
 6. `bash scripts/build-resolver.sh` → prints the resolver WASM SHA-256; compare it with [`resolver/WASM_SHA256`](resolver/WASM_SHA256) and the hash in step 1.
+
+## Use Noa Court from any prediction market
+
+Noa is the first integration, not the only one. Court is a public NEAR contract (`ai-resolver.noamarket.near`) and any market or contract can use it in one of two ways. Full guide with gas, fees and the receipt schema: [docs/INTEGRATE.md](docs/INTEGRATE.md).
+
+**A. Generic request + callback (any contract).** Send a canonical ResolutionSpec (the MCP `rules_render` tool returns `spec_json`), then let the keeper trigger it after `observation.at`:
+
+```sh
+near contract call-function as-transaction ai-resolver.noamarket.near request_resolution \
+  json-args "$(node -e 'process.stdout.write(JSON.stringify({spec_json:process.env.SPEC_JSON,callback:{contract_id:"your-market.near",method:"on_court_verdict"}}))')" \
+  prepaid-gas '100.0 Tgas' attached-deposit '0.1 NEAR' sign-as your-account.near network-config mainnet sign-with-keychain send
+# → returns "req:<n>"; read the receipt any time with get_verdict({"id":"req:<n>"})
+```
+
+Court calls your contract once with the full receipt. Accept it only from Court and only from the TEE:
+
+```rust
+pub fn on_court_verdict(&mut self, request_id: String, verdict: Value) {
+    require!(env::predecessor_account_id() == "ai-resolver.noamarket.near".parse::<AccountId>().unwrap(), "Court only");
+    require!(verdict["tee"] == true, "TEE verdict required");
+    require!(verdict["verdict"]["status"] == "resolved", "not resolved");
+    let outcome = verdict["verdict"]["outcome"].as_str().unwrap(); // settle your market with it
+}
+```
+
+Also bind the expected request ID, spec hash and outcome set in your own state. This path ran end to end on testnet ([`req:1`](docs/INTEGRATE.md#verified-on-testnet), `tee: true`); it is the same contract code on mainnet but has not been run there yet.
+
+**B. Market contracts with a `resolver` field (Noa-style).** Create the market with `resolver = "ai-resolver.noamarket.near"` and `metadata_hash = "noacourt:sha256:<spec hex>"` after `register_spec`, then anyone calls `link_market`. Court resolves or voids the market through its `resolve_market` / `void_market` methods. This is how Noa markets #26 and #27 run on mainnet; another contract needs the same method shapes ([details](docs/INTEGRATE.md#noa-market-integration)).
 
 ## Live on NEAR mainnet
 

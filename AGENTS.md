@@ -11,6 +11,7 @@ Noa Court is an AI resolver for prediction markets on NEAR mainnet. Start with [
 | MCP server works | `cd apps/mcp && pnpm install && pnpm test` (Node 22, pnpm) | 178 tests pass |
 | Court contract | `cd contracts/court && cargo test --lib` | 21 tests pass |
 | Resolver is reproducible | `bash scripts/build-resolver.sh` (Rust 1.96.0, `wasm32-wasip2`) | SHA-256 equals `resolver/WASM_SHA256` |
+| Other markets can integrate | Read README "Use Noa Court from any prediction market" and `docs/INTEGRATE.md` | Generic `request_resolution` + callback (verified on testnet as `req:1`), or Noa-style `resolver` + `link_market` (live on mainnet) |
 | Agent-driven market creation | `claude mcp add --transport http noacourt https://court.noamarket.xyz/mcp`, then call `court_guide` | Guide text; `market_create_link` returns a `/sign/<id>` URL |
 
 ## Layout

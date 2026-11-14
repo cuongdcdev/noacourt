@@ -1,13 +1,15 @@
-# Integrate Noa Court (testnet)
+# Integrate Noa Court
 
-Noa Court resolves a canonical ResolutionSpec through `ai-resolver.noamarket.testnet`. A generic consumer can request a verdict without using Noa markets. Noa markets use the same resolver through a market link. The current deployment is testnet only; check [the spec reference](SPEC.md) before funding a request.
+Noa Court resolves a canonical ResolutionSpec through `ai-resolver.noamarket.near` on NEAR mainnet. Any prediction market or contract can use it: a generic consumer requests a verdict with `request_resolution` and reads it back (or receives a callback), without using Noa markets. Noa markets use the same resolver through a market link. Check [the spec reference](SPEC.md) before funding a request; mainnet requests use real NEAR.
+
+> **Status.** The Noa market path is live on mainnet (markets #26 and #27). The generic `request_resolution` path runs the same contract code and was exercised end to end on testnet (`req:1`, below); it has not yet been run on mainnet.
 
 ## Generic contract integration
 
-Clone the [Noa Court repository](https://github.com/cuongdcdev/noacourt) when published, then install `near-cli-rs` 0.30 and Node.js with the `apps/mcp` dependencies (`cd apps/mcp && pnpm install`). Prepare a complete valid ResolutionSpec in a local JSON file, updating its observation time and sources. The following uses the saved [price example](../resolver/examples/a1_near_threshold.spec.json) as a starting point. Its fixed date must be moved into the future before a new request. `spec_json` is one JSON **string**, not a nested object. The `canonicalize` package used here is the same dependency as the MCP server; `rules_render` can also supply canonical `spec_json` and `spec_hash`.
+Clone the [Noa Court repository](https://github.com/cuongdcdev/noacourt), then install `near-cli-rs` 0.30 and Node.js with the `apps/mcp` dependencies (`cd apps/mcp && pnpm install`). Prepare a complete valid ResolutionSpec in a local JSON file, updating its observation time and sources. The following uses the saved [price example](../resolver/examples/a1_near_threshold.spec.json) as a starting point. Its fixed date must be moved into the future before a new request. `spec_json` is one JSON **string**, not a nested object. The `canonicalize` package used here is the same dependency as the MCP server; `rules_render` can also supply canonical `spec_json` and `spec_hash`.
 
 ```sh
-export SIGNER=your-account.testnet
+export SIGNER=your-account.near
 export SPEC_FILE=/absolute/path/to/your-updated-spec.json
 export SPEC_JSON="$(cd apps/mcp && node -e 'const fs=require("node:fs");const canonicalize=require("canonicalize");const spec=JSON.parse(fs.readFileSync(process.env.SPEC_FILE,"utf8"));process.stdout.write(canonicalize(spec));')"
 ```
@@ -15,7 +17,7 @@ export SPEC_JSON="$(cd apps/mcp && node -e 'const fs=require("node:fs");const ca
 This transaction pays at least 0.1 NEAR (the configured minimum; Court keeps its 0.05 NEAR resolution fee plus storage and refunds excess). It returns an ID such as `req:1`. Omit the `callback` or set it to `null` for polling only. For a callback, deploy the consumer method below first and set its account in the arguments.
 
 ```sh
-near contract call-function as-transaction ai-resolver.noamarket.testnet request_resolution json-args "$(node -e 'process.stdout.write(JSON.stringify({spec_json:process.env.SPEC_JSON,callback:{contract_id:"consumer.testnet",method:"on_court_verdict"}}))')" prepaid-gas '100.0 Tgas' attached-deposit '0.1 NEAR' sign-as "$SIGNER" network-config testnet sign-with-legacy-keychain send
+near contract call-function as-transaction ai-resolver.noamarket.near request_resolution json-args "$(node -e 'process.stdout.write(JSON.stringify({spec_json:process.env.SPEC_JSON,callback:{contract_id:"consumer.near",method:"on_court_verdict"}}))')" prepaid-gas '100.0 Tgas' attached-deposit '0.1 NEAR' sign-as "$SIGNER" network-config mainnet sign-with-legacy-keychain send
 ```
 
 `sign-with-legacy-keychain` reads keys in `~/.near-credentials`, as used by the older NEAR CLI; use `sign-with-keychain` instead for a key in the OS keychain. near-cli-rs also supports `sign-with-access-key-file` for an explicit key file.
@@ -23,9 +25,9 @@ near contract call-function as-transaction ai-resolver.noamarket.testnet request
 After `observation.at`, anyone can trigger the request; the permissionless keeper also does this. Use the returned ID in place of `req:1`:
 
 ```sh
-near contract call-function as-transaction ai-resolver.noamarket.testnet trigger_request json-args '{"request_id":"req:1"}' prepaid-gas '300.0 Tgas' attached-deposit '0 NEAR' sign-as "$SIGNER" network-config testnet sign-with-legacy-keychain send
-near contract call-function as-read-only ai-resolver.noamarket.testnet get_request json-args '{"request_id":"req:1"}' network-config testnet now
-near contract call-function as-read-only ai-resolver.noamarket.testnet get_verdict json-args '{"id":"req:1"}' network-config testnet now
+near contract call-function as-transaction ai-resolver.noamarket.near trigger_request json-args '{"request_id":"req:1"}' prepaid-gas '300.0 Tgas' attached-deposit '0 NEAR' sign-as "$SIGNER" network-config mainnet sign-with-legacy-keychain send
+near contract call-function as-read-only ai-resolver.noamarket.near get_request json-args '{"request_id":"req:1"}' network-config mainnet now
+near contract call-function as-read-only ai-resolver.noamarket.near get_verdict json-args '{"id":"req:1"}' network-config mainnet now
 ```
 
 `get_request` shows `status`, `attempts`, `retry_at_ns`, `last_error`, and `callback_sent`. `get_verdict` returns `null` until a receipt is stored. A resolved request has an outcome, while a retry may have a receipt for the latest attempt. Trigger again when `retry_at_ns` is due, within the attempt limit. The keeper can do this, but has no power to choose outcomes.
@@ -33,10 +35,10 @@ near contract call-function as-read-only ai-resolver.noamarket.testnet get_verdi
 For a linked Noa market, call `trigger({"market_id":N})` instead. Replace `42` below with the linked market ID:
 
 ```sh
-near contract call-function as-transaction ai-resolver.noamarket.testnet trigger json-args '{"market_id":42}' prepaid-gas '300.0 Tgas' attached-deposit '0 NEAR' sign-as "$SIGNER" network-config testnet sign-with-legacy-keychain send
+near contract call-function as-transaction ai-resolver.noamarket.near trigger json-args '{"market_id":42}' prepaid-gas '300.0 Tgas' attached-deposit '0 NEAR' sign-as "$SIGNER" network-config mainnet sign-with-legacy-keychain send
 ```
 
-Both trigger methods require prepaid gas of at least `outlayer_gas_tgas + min(50, 280 - outlayer_gas_tgas) + 15` TGas. The current testnet `outlayer_gas_tgas` is 200, so the minimum is **265 TGas**; use **300 TGas** for either method. The current OutLayer `resource_limits.max_execution_seconds` is **150**. Read `get_config` before integrating with a different deployment or after a configuration change.
+Both trigger methods require prepaid gas of at least `outlayer_gas_tgas + min(50, 280 - outlayer_gas_tgas) + 15` TGas. The current mainnet `outlayer_gas_tgas` is 200, so the minimum is **265 TGas**; use **300 TGas** for either method. The current OutLayer `resource_limits.max_execution_seconds` is **150**. Read `get_config` before integrating with a different deployment or after a configuration change.
 
 | Court call                                | Recommended prepaid gas | Attached deposit |
 | ----------------------------------------- | ----------------------- | ---------------- |
@@ -63,7 +65,7 @@ pub struct Consumer {
 #[near]
 impl Consumer {
     pub fn on_court_verdict(&mut self, request_id: String, verdict: Value) {
-        let court: AccountId = "ai-resolver.noamarket.testnet".parse().unwrap();
+        let court: AccountId = "ai-resolver.noamarket.near".parse().unwrap();
         require!(env::predecessor_account_id() == court, "Court callback only");
         require!(verdict["tee"] == true, "TEE verdict required");
         require!(verdict["id"] == request_id, "request mismatch");
@@ -76,7 +78,7 @@ impl Consumer {
 }
 ```
 
-Adapt storage and outcome validation to your own contract. For mainnet consumers, require `tee == true` and bind the expected Court account, request ID, spec hash, and outcome set; the sample applies the TEE check on testnet too, so a testnet trusted-keeper fallback receipt would be rejected. A callback is an asynchronous notification: `get_verdict` is the durable read interface.
+Adapt storage and outcome validation to your own contract. Require `tee == true` and bind the expected Court account, request ID, spec hash, and outcome set. Mainnet Court has `trusted_keeper: null`, so every mainnet receipt comes from the OutLayer TEE callback. A callback is an asynchronous notification: `get_verdict` is the durable read interface.
 
 ### Full receipt schema
 
@@ -135,7 +137,7 @@ The values above illustrate the schema, not a live receipt; read `get_config` fo
 
 ## Noa market integration
 
-Testnet Noa is `v3.noamarket.testnet`; Court is `ai-resolver.noamarket.testnet`; NPOINT is `point.noamarket.testnet` with 18 decimals. A creator first calls `register_spec({"spec_json":"<canonical JSON string>"})` on Court with at least 0.1 NEAR and 100 TGas. It returns `sha256:<hex>` and grants **one credit to the paying account**. Then that same account calls Noa `create_market` with `resolver: "ai-resolver.noamarket.testnet"`, outcomes in the exact spec order, expiration no later than `observation.at`, and the metadata hash below. Finally call Court `link_market({"market_id":N,"spec_hash":null})` with 100 TGas. Anyone can perform this final call when metadata binds the spec; the sign page or keeper normally does it. Check the returned boolean or `get_market`, because a rejected link is logged and may return `false` while the transaction succeeds. `get_credits({"spec_hash":"sha256:<hex>","account_id":"creator.testnet"})` reports usable creator credits. Another account's `register_spec` credit cannot link this creator's market.
+Mainnet Noa is `v3.noamarket.near`; Court is `ai-resolver.noamarket.near`; the default stake token is NPOINT `npoint.noamarket.near` (any Noa-whitelisted token works; see `list_whitelisted_tokens`). A creator first calls `register_spec({"spec_json":"<canonical JSON string>"})` on Court with at least 0.1 NEAR and 100 TGas. It returns `sha256:<hex>` and grants **one credit to the paying account**. Then that same account calls Noa `create_market` with `resolver: "ai-resolver.noamarket.near"`, outcomes in the exact spec order, expiration no later than `observation.at`, and the metadata hash below. Finally call Court `link_market({"market_id":N,"spec_hash":null})` with 100 TGas. Anyone can perform this final call when metadata binds the spec; the sign page or keeper normally does it. Check the returned boolean or `get_market`, because a rejected link is logged and may return `false` while the transaction succeeds. `get_credits({"spec_hash":"sha256:<hex>","account_id":"creator.near"})` reports usable creator credits. Another account's `register_spec` credit cannot link this creator's market.
 
 The MCP `market_create_link` tool prepares a wallet URL at `/sign/<id>` (valid for 24 hours). The page uses NEAR Connect with Intear, Meteor (extension, web and mobile app) or HOT Wallet (mainnet only). Its signer plan may first add `ft_transfer_call` to fund Noa's internal NPOINT balance. It then asks the creator's wallet to sign Court `register_spec` and Noa `create_market` as separate transactions, and attempts the permissionless link after creation. The MCP server never handles creator keys. For nonexempt creators, Noa currently charges a creation fee and storage; read the live plan before approving.
 
@@ -160,7 +162,7 @@ Noa metadata is write-once and creator-owned: an identical retry returns 200 `al
 
 The `/sign` transaction builder passes `metadata_hash = "noacourt:sha256:<spec_hash hex>"` to Noa `create_market`: in code this is `"noacourt:" + spec_hash`, because `spec_hash` already begins with `sha256:`. This uses Noa's existing free-form `metadata_hash` field; **Noa contract code is unchanged**. Court checks this value against a stored spec, so `link_market({"market_id":N,"spec_hash":null})` is permissionless. The market creator still needs their own unused registration credit; the link also checks Court as resolver, matching ordered outcomes, market state, and expiration at or before `observation.at`.
 
-For a market created in another UI or by CLI with a different or empty `metadata_hash`, the **market creator** can instead sign `link_market({"market_id":N,"spec_hash":"sha256:<hex>"})` (100 TGas, zero deposit). This is an extra creator signature. It works under the same resolver, outcome, expiration, active-market, and creator-credit checks. Current testnet Court and MCP defaults are five attempts every three minutes. Court requires the Noa resolution deadline to cover `observation.at + max_attempts × retry.every + 5m` (20 minutes with those defaults); otherwise linking returns `resolution window too short for retries`. The MCP computes the required resolution window automatically. A metadata value beginning with `noacourt:` cannot use this bypass; an explicit hash must match it.
+For a market created in another UI or by CLI with a different or empty `metadata_hash`, the **market creator** can instead sign `link_market({"market_id":N,"spec_hash":"sha256:<hex>"})` (100 TGas, zero deposit). This is an extra creator signature. It works under the same resolver, outcome, expiration, active-market, and creator-credit checks. Current Court and MCP defaults are five attempts every three minutes. Court requires the Noa resolution deadline to cover `observation.at + max_attempts × retry.every + 5m` (20 minutes with those defaults); otherwise linking returns `resolution window too short for retries`. The MCP computes the required resolution window automatically. A metadata value beginning with `noacourt:` cannot use this bypass; an explicit hash must match it.
 
 ## MCP for agents
 
@@ -199,6 +201,6 @@ Typical prompt: “Use `court_guide`, sample Binance NEAR/USDT and an OKX fallba
 | `Unresolvable`   | `on_unavailable: "void"` leaves no outcome. After Noa's resolution deadline, anyone may call Court `void`; generic consumers receive a final callback. |
 | `Voided`         | Noa accepted `void_market`; the market has no winning outcome.                                                                                         |
 
-If forwarding fails before the Noa deadline, anyone may call `retry_forward`; after the deadline, `void` may be attempted. A resolved Noa proposal waits through Noa's dispute window; then anyone, including the keeper, calls Noa `finalize_resolution`. Court does not finalize it. The testnet minute-market dispute window is configured to 10 minutes; read live Noa config for each market. `register_spec` and `request_resolution` require at least Court's `min_deposit` (currently 0.1 NEAR) and enough for storage plus `resolution_fee` (currently 0.05 NEAR); excess is refunded. Court pays each OutLayer request deposit from its own balance (currently configured to 0.02 NEAR). Read `get_config` rather than assuming these values on another deployment.
+If forwarding fails before the Noa deadline, anyone may call `retry_forward`; after the deadline, `void` may be attempted. A resolved Noa proposal waits through Noa's dispute window; then anyone, including the keeper, calls Noa `finalize_resolution`. Court does not finalize it. On mainnet, market #26 had a 60-minute dispute window; read live Noa config for each market. `register_spec` and `request_resolution` require at least Court's `min_deposit` (currently 0.1 NEAR) and enough for storage plus `resolution_fee` (currently 0.05 NEAR); excess is refunded. Court pays each OutLayer request deposit from its own balance (currently configured to 0.02 NEAR). Read `get_config` rather than assuming these values on another deployment.
 
 Court emits NEP-297 `EVENT_JSON` logs with `standard: "noacourt"` and `version: "1.0.0"`, including `spec_registered`, `market_linked`, `link_rejected`, `triggered`, `verdict_received`, `verdict_rejected`, and `callback_sent` as applicable. The testnet-only `trusted_keeper` fallback can submit a non-TEE verdict, which is recorded with `tee: false`; it must be `null` on mainnet. The normal keeper calls permissionless methods and cannot choose an outcome.
