@@ -278,23 +278,45 @@ function showResult(data: Record<string, any>) {
         : `Your market was created. Linking it to Noa Court will be retried automatically${data.link_error ? ` (${data.link_error})` : ""}.`,
     ),
   );
-  const hashes = [
-    ...(data.tx_hashes || []),
-    ...(data.link_tx_hash ? [data.link_tx_hash] : []),
-  ];
-  if (hashes.length) {
-    const list = el("ul", "txs");
-    for (const hash of hashes) {
-      const li = el("li");
-      const a = el("a", undefined, `Transaction ${hash}`);
-      a.href = `https://testnet.nearblocks.io/txns/${encodeURIComponent(hash)}`;
+  // tx_plan order is [ft_transfer_call?, register_spec, create_market]; the link tx comes from /complete.
+  const signed: string[] = data.tx_hashes || [];
+  const rows: [string, string][] = signed.map((hash, i) => {
+    const fromEnd = signed.length - 1 - i;
+    const label =
+      fromEnd === 0 ? "Create market" : fromEnd === 1 ? "Register spec" : "Fund stake";
+    return [label, hash];
+  });
+  if (data.link_tx_hash) rows.push(["Link to Court", data.link_tx_hash]);
+  if (rows.length) {
+    const list = el("dl", "txs");
+    for (const [label, hash] of rows) {
+      const row = el("div");
+      const a = el("a", undefined, shortHash(hash));
+      a.href = txUrl(hash);
       a.target = "_blank";
       a.rel = "noopener noreferrer";
-      li.append(a);
-      list.append(li);
+      a.title = hash;
+      a.setAttribute("aria-label", `${label} transaction ${hash} on NearBlocks`);
+      const dd = el("dd");
+      dd.append(a);
+      row.append(el("dt", undefined, label), dd);
+      list.append(row);
     }
     result.append(list);
   }
+}
+
+let explorerNetwork = "testnet";
+function explorerBase(): string {
+  return explorerNetwork === "mainnet"
+    ? "https://nearblocks.io"
+    : "https://testnet.nearblocks.io";
+}
+function txUrl(hash: string): string {
+  return `${explorerBase()}/txns/${encodeURIComponent(hash)}`;
+}
+function shortHash(hash: string): string {
+  return hash.length > 14 ? `${hash.slice(0, 6)}…${hash.slice(-4)}` : hash;
 }
 
 async function getJson(url: string, init?: RequestInit) {
@@ -399,6 +421,7 @@ async function main() {
   let request: PublicRequest;
   try {
     request = await getJson(`/api/sign/${encodeURIComponent(id)}`);
+    explorerNetwork = request.network.networkId;
   } catch (error) {
     details.replaceChildren();
     details.removeAttribute("aria-busy");
@@ -478,7 +501,7 @@ async function main() {
   {
     const by = el("span", "resolver");
     const link = el("a", "mono", request.network.courtContract);
-    link.href = `https://${request.network.networkId}.nearblocks.io/address/${encodeURIComponent(request.network.courtContract)}`;
+    link.href = `${explorerBase()}/address/${encodeURIComponent(request.network.courtContract)}`;
     link.target = "_blank";
     link.rel = "noopener noreferrer";
     by.append(link, " ", el("span", "badge", "TEE"));

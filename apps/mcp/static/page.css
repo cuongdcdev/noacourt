@@ -223,3 +223,7 @@ button.copy:hover{background:var(--chip)}
 @media (max-width:640px){main{padding:12px 16px 56px}.card,.act{padding:14px 16px}.foot .row{grid-template-columns:1fr}.owin{font-size:.8125rem}}
 .verify{margin:0;padding:4px 4px 0;border-top:0}
 .plines .row{grid-template-columns:5.5rem minmax(0,1fr);gap:4px 12px}.plines dd{overflow-wrap:anywhere}
+.txs{margin:12px 0 0;display:grid;gap:6px}
+.txs>div{display:flex;justify-content:space-between;gap:12px;align-items:baseline;font-size:.875rem}
+.txs dt{color:var(--muted,inherit)}
+.txs dd{margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.8125rem}
