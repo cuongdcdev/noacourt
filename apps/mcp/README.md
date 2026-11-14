@@ -4,7 +4,7 @@ Standalone Node 22/pnpm server for the eleven Noa Court MCP tools, wallet sign l
 
 ## Run
 
-From `apps/mcp`: `pnpm install`, `pnpm build`, `pnpm test`, then `pnpm start` (or `pnpm dev`). Configuration is read from the repository `.env` and process env; see `.env.example`. `/healthz` and `/mcp` listen on `127.0.0.1:3310` by default. The keeper starts when `KEEPER_ENABLED=1`. Default testnet RPCs are FastNEAR, NEAR testnet, and FastNEAR archival (`https://archival-rpc.testnet.fastnear.com`); custom endpoints can be set with `NEAR_RPC_URLS`.
+From `apps/mcp`: `pnpm install`, `pnpm build`, `pnpm test`, then `pnpm start` (or `pnpm dev`). Configuration is read from the repository `.env` and process env; see `.env.example`. `/healthz` and `/mcp` listen on `127.0.0.1:3330` by default (the local testnet instance sets `PORT=3310` in `.env`). The keeper starts when `KEEPER_ENABLED=1`. Default testnet RPCs are FastNEAR, NEAR testnet, and FastNEAR archival (`https://archival-rpc.testnet.fastnear.com`); custom endpoints can be set with `NEAR_RPC_URLS`.
 
 Court configuration and the local/published resolver hashes refresh in the background every `COURT_CONFIG_REFRESH_MS` (60 seconds by default). `/healthz` reports the last successful Court fetch time and last refresh error; an RPC failure leaves the last known config available. The local WASM hash is recalculated when its file modification time or size changes.
 
@@ -21,6 +21,7 @@ The tools are `court_guide`, `catalog_list`, `catalog_tool`, `source_sample`, `s
 | `NOA_API_URL`                | Noa API base the browser publishes to and the server reads back (mainnet default `https://noamarket.xyz/api-proxy`).             |
 | `NOA_AUTH_RECIPIENT`         | NEP-413 recipient; must equal Noa's `AUTH_RECIPIENT` (mainnet default `noamarket.near`; testnet recipients must end `.testnet`). |
 | `NOA_MARKET_URL_BASE`        | Market page prefix; `<base><market_id>` is the published link (mainnet default `https://noamarket.xyz/markets/`).                |
+| `NOA_PUBLICATION`            | Set `off` to disable Noa publication even on mainnet (otherwise mainnet uses the built-in Noa defaults above).                    |
 | `PUBLICATION_VERIFY_PER_MIN` | Read-back requests per sign request and IP per minute (default 12).                                                              |
 
 URLs must be `https` (or `http` on localhost/127.0.0.1) without credentials, query or fragment. If none of the three is set (the testnet default) publication is **disabled**: the sign page shows a banner and the create flow is unchanged. If any is set, all three must be valid; otherwise the config is invalid and new links and create transactions are refused with a visible error. The browser only receives these values from the server.

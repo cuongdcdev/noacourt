@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { resolve } from "node:path";
 import dotenv from "dotenv";
 
@@ -26,27 +27,53 @@ const wasmCandidates = [
   resolve(root, "resolver/target/wasm32-wasip2/release/resolver.wasm"),
 ];
 
+export function explorerBase(network: string) {
+  return network === "mainnet"
+    ? "https://nearblocks.io"
+    : "https://testnet.nearblocks.io";
+}
+
+const NETWORK_DEFAULTS = {
+  testnet: {
+    rpcs: "https://test.rpc.fastnear.com,https://rpc.testnet.near.org,https://archival-rpc.testnet.fastnear.com",
+    court: "ai-resolver.noamarket.testnet",
+    noa: "v3.noamarket.testnet",
+    token: "point.noamarket.testnet",
+    keeper: "court-ops.noamarket.testnet",
+    creds: "/root/.near-credentials/testnet/court-ops.noamarket.testnet.json",
+  },
+  mainnet: {
+    rpcs: "https://rpc.mainnet.fastnear.com,https://rpc.mainnet.near.org,https://near.lava.build",
+    court: "ai-resolver.noamarket.near",
+    noa: "v3.noamarket.near",
+    token: "npoint.noamarket.near",
+    keeper: "court-ops.noamarket.near",
+    creds: resolve(
+      homedir(),
+      ".near-credentials/mainnet/court-ops.noamarket.near.json",
+    ),
+  },
+} as const;
+
 export function loadConfig() {
+  const network = env("NEAR_NETWORK", "testnet");
+  if (network !== "testnet" && network !== "mainnet")
+    throw new Error(`Invalid NEAR_NETWORK: ${network}`);
+  const d = NETWORK_DEFAULTS[network];
   return {
-    port: number("PORT", 3310),
+    port: number("PORT", 3330),
     host: env("HOST", "127.0.0.1"),
     publicBaseUrl: env("PUBLIC_BASE_URL", "https://noacourtmcp.junstudio.xyz"),
-    nearNetwork: env("NEAR_NETWORK", "testnet"),
-    nearRpcUrls: env(
-      "NEAR_RPC_URLS",
-      "https://test.rpc.fastnear.com,https://rpc.testnet.near.org,https://archival-rpc.testnet.fastnear.com",
-    )
+    nearNetwork: network as "testnet" | "mainnet",
+    nearRpcUrls: env("NEAR_RPC_URLS", d.rpcs)
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean),
-    courtContract: env("COURT_CONTRACT", "ai-resolver.noamarket.testnet"),
-    noaContract: env("NOA_CONTRACT", "v3.noamarket.testnet"),
-    marketToken: env("MARKET_TOKEN", "point.noamarket.testnet"),
-    keeperAccount: env("KEEPER_ACCOUNT", "court-ops.noamarket.testnet"),
-    keeperCredentials: env(
-      "KEEPER_CREDENTIALS",
-      "/root/.near-credentials/testnet/court-ops.noamarket.testnet.json",
-    ),
+    courtContract: env("COURT_CONTRACT", d.court),
+    noaContract: env("NOA_CONTRACT", d.noa),
+    marketToken: env("MARKET_TOKEN", d.token),
+    keeperAccount: env("KEEPER_ACCOUNT", d.keeper),
+    keeperCredentials: env("KEEPER_CREDENTIALS", d.creds),
     resolverWasm: env(
       "RESOLVER_WASM",
       wasmCandidates.find(existsSync) || wasmCandidates[0],
@@ -77,6 +104,8 @@ export function loadConfig() {
     noaApiUrl: process.env.NOA_API_URL?.trim() || "",
     noaAuthRecipient: process.env.NOA_AUTH_RECIPIENT?.trim() || "",
     noaMarketUrlBase: process.env.NOA_MARKET_URL_BASE?.trim() || "",
+    // NOA_PUBLICATION=off disables publication even on mainnet (where built-in Noa defaults would otherwise enable it).
+    noaPublicationOff: env("NOA_PUBLICATION", "") === "off",
     publicationVerifyPerMin: number("PUBLICATION_VERIFY_PER_MIN", 12),
   };
 }

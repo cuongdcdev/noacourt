@@ -80,8 +80,10 @@ export function resolvePublicationConfig(
   config: Pick<
     Config,
     "nearNetwork" | "noaApiUrl" | "noaAuthRecipient" | "noaMarketUrlBase"
-  >,
+  > & { noaPublicationOff?: boolean },
 ): PublicationConfig {
+  if (config.noaPublicationOff)
+    return { status: "disabled", reason: "not_configured" };
   const mainnet = config.nearNetwork === "mainnet";
   const defaults = mainnet
     ? MAINNET_NOA_DEFAULTS

@@ -1,3 +1,4 @@
+import { explorerBase } from "./config.js";
 import {
   normalizeCourtItem,
   observationNs,
@@ -179,14 +180,14 @@ export function lifecycle(input: {
   };
 }
 
-export function outlayerDetails(verdict: unknown) {
+export function outlayerDetails(verdict: unknown, network = "testnet") {
   const outlayer = (verdict as Record<string, any> | null)?.outlayer ?? null;
   return {
     outlayer: withIso(outlayer),
     outlayer_request_id: outlayerRequestIdFromVerdict(verdict),
     outlayer_contract_url:
       typeof outlayer?.contract === "string"
-        ? `https://testnet.nearblocks.io/address/${encodeURIComponent(outlayer.contract)}`
+        ? `${explorerBase(network)}/address/${encodeURIComponent(outlayer.contract)}`
         : null,
   };
 }

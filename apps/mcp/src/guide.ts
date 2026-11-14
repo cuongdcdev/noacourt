@@ -183,7 +183,28 @@ export function makeExamples(now: Date = new Date()) {
 
 export const examples = makeExamples();
 
-export function courtGuide(): string {
+export type GuideContext = {
+  baseUrl?: string;
+  network?: string;
+  courtContract?: string;
+  noaContract?: string;
+  token?: string;
+};
+
+export function courtGuide(ctx: GuideContext = {}): string {
+  const text = renderGuide();
+  const base = (ctx.baseUrl || "https://noacourtmcp.junstudio.xyz").replace(
+    /\/+$/,
+    "",
+  );
+  const network = ctx.network || "testnet";
+  const header = `Network: ${network}${ctx.courtContract ? `. Court contract ${ctx.courtContract}` : ""}${ctx.noaContract ? `, Noa contract ${ctx.noaContract}` : ""}${ctx.token ? `, default token ${ctx.token}` : ""}. ${network === "mainnet" ? "This is NEAR mainnet: markets, stakes and fees use real funds." : "This is NEAR testnet: markets and tokens have no real value."}\n\n`;
+  return text
+    .replaceAll("https://noacourtmcp.junstudio.xyz", base)
+    .replace("now_utc:", `${header}now_utc:`);
+}
+
+function renderGuide(): string {
   const currentExamples = makeExamples();
   return `# Noa Court drafting guide
 

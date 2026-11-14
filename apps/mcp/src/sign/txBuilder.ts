@@ -159,6 +159,7 @@ export function buildCreateMarketTxs(input: BuildInput): WalletTransaction[] {
     );
   if (resolutionWindow > 365 * 1440)
     throw new Error("resolution_window_minutes exceeds Noa's 365-day maximum");
+  // The server always supplies token_id (config.marketToken is network-aware); this default is only for direct library use/tests.
   const tokenId = input.token_id || "point.noamarket.testnet";
   const stake = nonnegative(
     input.stake_yocto ??

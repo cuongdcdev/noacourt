@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { Config } from "../config.js";
+import { explorerBase, type Config } from "../config.js";
 import { classifyLinkRejection, RejectionStore } from "./rejections.js";
 
 export type ActionRecord = {
@@ -17,7 +17,9 @@ export type ActionRecord = {
 export class ActionHistory {
   private db: DatabaseSync;
   private rejections: RejectionStore;
+  private readonly explorer: string;
   constructor(config: Config) {
+    this.explorer = explorerBase(config.nearNetwork);
     this.db = new DatabaseSync(join(config.dataDir, "mcp.sqlite"));
     this.rejections = new RejectionStore(this.db);
     this.db.exec(`CREATE TABLE IF NOT EXISTS keeper_actions (
@@ -72,7 +74,7 @@ export class ActionHistory {
         .all(id) as Omit<ActionRecord, "tx_url">[]
     ).map((entry) => ({
       ...entry,
-      tx_url: `https://testnet.nearblocks.io/txns/${encodeURIComponent(entry.tx_hash)}`,
+      tx_url: `${this.explorer}/txns/${encodeURIComponent(entry.tx_hash)}`,
     }));
   }
 
@@ -85,7 +87,7 @@ export class ActionHistory {
             permanent: row.permanent === 1,
             tx_hash: row.tx_hash,
             tx_url: row.tx_hash
-              ? `https://testnet.nearblocks.io/txns/${encodeURIComponent(row.tx_hash)}`
+              ? `${this.explorer}/txns/${encodeURIComponent(row.tx_hash)}`
               : null,
             next_retry_at:
               row.next_retry_at === null

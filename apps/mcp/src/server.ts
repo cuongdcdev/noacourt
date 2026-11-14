@@ -7,7 +7,7 @@ import QRCode from "qrcode";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
-import type { Config } from "./config.js";
+import { explorerBase, type Config } from "./config.js";
 import { catalog, catalogParamSchemas } from "./catalog.js";
 import { courtGuide } from "./guide.js";
 import { NearRpc } from "./near/rpc.js";
@@ -111,11 +111,13 @@ export type ServerDeps = {
   /** fetch used for server-side Noa read-back (tests inject a fake). */
   noaFetch?: typeof fetch;
 };
-const discovery = {
+const makeDiscovery = (config: Config) => {
+  const base = config.publicBaseUrl.replace(/\/+$/, "");
+  return {
   name: "Noa Court",
-  description:
-    "Testnet AI resolver for Noa markets. Draft and simulate a resolution spec, then let the creator sign with their own wallet.",
-  mcp_endpoint: "https://noacourtmcp.junstudio.xyz/mcp",
+  network: config.nearNetwork,
+  description: `${config.nearNetwork === "mainnet" ? "Mainnet" : "Testnet"} AI resolver for Noa markets. Draft and simulate a resolution spec, then let the creator sign with their own wallet.`,
+  mcp_endpoint: `${base}/mcp`,
   start_here:
     "Connect an MCP client and call court_guide before drafting a market.",
   workflow: [
@@ -130,14 +132,15 @@ const discovery = {
     "verdict_get",
   ],
   docs: {
-    overview: "https://noacourtmcp.junstudio.xyz/docs/README.md",
-    mcp: "https://noacourtmcp.junstudio.xyz/docs/MCP.md",
-    architecture: "https://noacourtmcp.junstudio.xyz/docs/ARCHITECTURE.md",
-    specification: "https://noacourtmcp.junstudio.xyz/docs/SPEC.md",
-    integration: "https://noacourtmcp.junstudio.xyz/docs/INTEGRATE.md",
-    near_tokens: "https://noacourtmcp.junstudio.xyz/docs/NEAR_TOKENS.md",
-    skill: "https://noacourtmcp.junstudio.xyz/docs/SKILL.md",
+    overview: `${base}/docs/README.md`,
+    mcp: `${base}/docs/MCP.md`,
+    architecture: `${base}/docs/ARCHITECTURE.md`,
+    specification: `${base}/docs/SPEC.md`,
+    integration: `${base}/docs/INTEGRATE.md`,
+    near_tokens: `${base}/docs/NEAR_TOKENS.md`,
+    skill: `${base}/docs/SKILL.md`,
   },
+  };
 };
 const docs = new Map([
   ["README.md", new URL("../../../README.md", import.meta.url)],
@@ -154,6 +157,7 @@ const docs = new Map([
 
 export function createApp(config: Config, deps: ServerDeps = {}) {
   const app = express();
+  const discovery = makeDiscovery(config);
   app.disable("x-powered-by");
   app.use(express.json({ limit: "1mb" }));
   app.get("/", (_req, res) => res.json(discovery));
@@ -206,7 +210,7 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
   courtRefreshTimer.unref();
   const outlayerIdCache = new Map<string, { id: string; txHash: string }>();
   const outlayerInfo = async (id: string, verdict: unknown) => {
-    const details = outlayerDetails(verdict);
+    const details = outlayerDetails(verdict, config.nearNetwork);
     if (details.outlayer_request_id !== null) return details;
     const actions = history
       .forItem(id)
@@ -237,7 +241,7 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
       outlayer_request_id: known?.id ?? null,
       outlayer_request_tx_hash: known?.txHash ?? null,
       outlayer_request_tx_url: known
-        ? `https://testnet.nearblocks.io/txns/${encodeURIComponent(known.txHash)}`
+        ? `${explorerBase(config.nearNetwork)}/txns/${encodeURIComponent(known.txHash)}`
         : null,
     };
   };
@@ -314,6 +318,11 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
           req.params.id,
           request?.status || "not found",
           request?.params.title,
+          {
+            network: config.nearNetwork,
+            courtContract: config.courtContract,
+            trustedKeeper: config.courtTrustedKeeper,
+          },
         ),
       );
   });
@@ -610,6 +619,8 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
     res.json({
       ok: true,
       version: "0.1.0",
+      network: config.nearNetwork,
+      court_contract: config.courtContract,
       wasm: {
         sha256: hash,
         published_sha256: published,
@@ -676,7 +687,15 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
       "court_guide",
       "Read the complete Noa Court drafting workflow, source rules, verified hosts, and example ResolutionSpec JSON before writing a market.",
       {},
-      guard(() => courtGuide()),
+      guard(() =>
+            courtGuide({
+              baseUrl: config.publicBaseUrl,
+              network: config.nearNetwork,
+              courtContract: config.courtContract,
+              noaContract: config.noaContract,
+              token: config.marketToken,
+            }),
+          ),
     );
     register(
       "catalog_list",
@@ -940,7 +959,7 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
           .string()
           .optional()
           .describe(
-            "Any active Noa-whitelisted token contract; see list_whitelisted_tokens. Defaults to the configured market token (point.noamarket.testnet, NPOINT).",
+            "Any active Noa-whitelisted token contract; see list_whitelisted_tokens. Defaults to the configured market token (configured per network; see list_whitelisted_tokens).",
           ),
         description: z
           .string()
@@ -1069,7 +1088,7 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
     );
     register(
       "market_status",
-      "Read Noa market, pending resolution, Court state and verdict; includes testnet explorer links.",
+      "Read Noa market, pending resolution, Court state and verdict; includes NEAR explorer links for the configured network.",
       {
         market_id: z.number().int().nonnegative(),
         account_id: z
@@ -1204,15 +1223,15 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
               graceSeconds: config.triggerGraceSeconds,
             }),
             links: {
-              noa: `https://testnet.nearblocks.io/address/${config.noaContract}`,
-              court: `https://testnet.nearblocks.io/address/${config.courtContract}`,
+              noa: `${explorerBase(config.nearNetwork)}/address/${config.noaContract}`,
+              court: `${explorerBase(config.nearNetwork)}/address/${config.courtContract}`,
             },
           };
         })(),
     );
     register(
       "verdict_get",
-      "Get a stored Court receipt for a Noa market ID or generic request ID, with testnet explorer link.",
+      "Get a stored Court receipt for a Noa market ID or generic request ID, with NEAR explorer link for the configured network.",
       {
         market_id: z.number().int().nonnegative().optional(),
         request_id: z.string().optional(),
@@ -1298,10 +1317,10 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
             ...(await outlayerInfo(id, verdict)),
             ...phase,
             eta_utc: verdict ? null : phase.next_action_at_utc,
-            link: `https://testnet.nearblocks.io/address/${config.courtContract}`,
+            link: `${explorerBase(config.nearNetwork)}/address/${config.courtContract}`,
             links: {
-              court: `https://testnet.nearblocks.io/address/${config.courtContract}`,
-              noa: `https://testnet.nearblocks.io/address/${config.noaContract}`,
+              court: `${explorerBase(config.nearNetwork)}/address/${config.courtContract}`,
+              noa: `${explorerBase(config.nearNetwork)}/address/${config.noaContract}`,
             },
           };
         })(),
