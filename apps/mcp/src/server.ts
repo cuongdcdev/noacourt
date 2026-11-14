@@ -27,7 +27,14 @@ import {
   createSignRequest,
   planForAccount,
   publicRequest,
+  ensureSnapshot,
 } from "./sign/service.js";
+import {
+  ERROR_MESSAGES,
+  REPORTABLE_STATES,
+  publicationView,
+  verifyPublication,
+} from "./sign/publication.js";
 import { signPage } from "./sign/page/html.js";
 import { KeeperSigner } from "./near/signer.js";
 import { KeeperLoop } from "./keeper/loop.js";
@@ -99,6 +106,8 @@ export type ServerDeps = {
   rawResolveHost?: typeof lookup;
   signer?: Pick<KeeperSigner, "send">;
   store?: SignStore;
+  /** fetch used for server-side Noa read-back (tests inject a fake). */
+  noaFetch?: typeof fetch;
 };
 const discovery = {
   name: "Noa Court",
@@ -296,7 +305,8 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
       );
   });
   app.get("/api/sign/:id", async (req, res) => {
-    const request = store.get(req.params.id);
+    let request = store.get(req.params.id);
+    if (request) request = ensureSnapshot(config, store, request);
     if (!request) {
       res.status(404).json({ error: "not found" });
       return;
@@ -373,6 +383,90 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
     } catch (error) {
       res.status(400).json({ error: (error as Error).message });
     }
+  });
+
+  const publicationLimit = new RateLimiter(config.publicationVerifyPerMin);
+  const noaFetch = deps.noaFetch || fetch;
+  const completedRequest = (id: string) => {
+    const request = store.get(id);
+    if (!request)
+      return { ok: false as const, error: 404, message: "not found" };
+    if (request.status !== "completed" || !request.result)
+      return {
+        ok: false as const,
+        error: 409,
+        message: "market not created yet",
+      };
+    return { ok: true as const, request };
+  };
+  app.post("/api/sign/:id/publication/verify", async (req, res) => {
+    const found = completedRequest(req.params.id);
+    if (!found.ok) {
+      res.status(found.error).json({ error: found.message });
+      return;
+    }
+    const limit = publicationLimit.check(`${req.params.id}:${ipOf(req)}`);
+    if (!limit.allowed) {
+      res
+        .status(429)
+        .set("Retry-After", String(limit.retryAfterSeconds))
+        .json({ error: "too many verification requests" });
+      return;
+    }
+    const view = publicationView(config, found.request);
+    if (view.state === "legacy_unavailable" || !view.noa) {
+      res
+        .status(409)
+        .json({ error: "publication unavailable", state: view.state });
+      return;
+    }
+    try {
+      const outcome = await verifyPublication(
+        config,
+        store,
+        found.request,
+        noaFetch,
+      );
+      res.json({
+        ...outcome,
+        publication: publicationView(config, store.get(found.request.id)!),
+      });
+    } catch (error) {
+      res.status(400).json({ error: (error as Error).message });
+    }
+  });
+  app.post("/api/sign/:id/publication/report", (req, res) => {
+    const found = completedRequest(req.params.id);
+    if (!found.ok) {
+      res.status(found.error).json({ error: found.message });
+      return;
+    }
+    const view = publicationView(config, found.request);
+    if (!view.noa || view.state === "legacy_unavailable") {
+      res
+        .status(409)
+        .json({ error: "publication unavailable", state: view.state });
+      return;
+    }
+    const state = String(req.body?.state);
+    const code = req.body?.error_code;
+    if (!(REPORTABLE_STATES as readonly string[]).includes(state)) {
+      res
+        .status(400)
+        .json({ error: "state cannot be reported by the browser" });
+      return;
+    }
+    if (found.request.publication.state !== "published")
+      store.setPublication(
+        found.request.id,
+        state as (typeof REPORTABLE_STATES)[number],
+        typeof code === "string" && ERROR_MESSAGES[code]
+          ? ERROR_MESSAGES[code]
+          : null,
+      );
+    res.json({
+      publication: publicationView(config, store.get(found.request.id)!),
+    });
   });
 
   const match = async () => {
@@ -754,7 +848,7 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
     );
     register(
       "market_create_link",
-      "Validate a market and spec, then store a wallet sign URL. This tool sends no transaction and never requests private keys; the user signs later in a wallet.",
+      "Validate a market and spec, then store a wallet sign URL with a frozen reviewed description and rules (optional description input). This tool sends no transaction and never requests private keys; the user signs later in a wallet.",
       {
         title: z
           .string()
@@ -805,6 +899,13 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
           .optional()
           .describe(
             "Noa-whitelisted token contract; defaults to point.noamarket.testnet (NPOINT).",
+          ),
+        description: z
+          .string()
+          .max(4000)
+          .optional()
+          .describe(
+            "Optional plain-text explanation of the final spec for traders (published to Noa as the market description, with the spec-derived rules). It never changes the spec or its hash; omitted = the rendered rules are used. The creator reviews both on the sign page.",
           ),
       },
       async (args) =>
@@ -896,6 +997,7 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
               resolution_window_minutes: args.resolution_window_minutes,
               court_max_attempts: configuredAttempts ?? undefined,
               creator: args.creator,
+              description: args.description,
             },
             requestedAtMs,
           );
@@ -1007,7 +1109,20 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
             };
           }
           const rejection = history.linkRejection(market_id);
+          const signRequest = store.findByMarketId(market_id);
+          const publication = signRequest
+            ? publicationView(config, signRequest)
+            : null;
           return {
+            metadata_publication: publication
+              ? {
+                  state: publication.state,
+                  error: publication.error,
+                  last_verified_at: publication.last_verified_at,
+                  noa_market_url: publication.market_url,
+                  sign_url: `${config.publicBaseUrl.replace(/\/$/, "")}/sign/${signRequest!.id}`,
+                }
+              : null,
             status: marketTopLevelStatus(
               market,
               court_market,

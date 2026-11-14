@@ -11,6 +11,11 @@ import {
   type BuildInput,
 } from "./txBuilder.js";
 import { SignStore, type SignRequest } from "./store.js";
+import {
+  buildSnapshot,
+  publicationView,
+  resolvePublicationConfig,
+} from "./publication.js";
 import { calculateSignTiming, SignPlanConflictError } from "./timing.js";
 import { requiredResolutionWindowMinutes } from "./txBuilder.js";
 import { DEFAULT_RETRY_POLICY } from "../spec/defaults.js";
@@ -31,9 +36,17 @@ export type SignDependencies = {
 export async function createSignRequest(
   config: Config,
   store: SignStore,
-  input: Omit<BuildInput, "court_contract" | "noa_contract">,
+  rawInput: Omit<BuildInput, "court_contract" | "noa_contract"> & {
+    description?: string;
+  },
   requestedAtMs = Date.now(),
 ) {
+  const { description, ...input } = rawInput;
+  const publicationConfig = resolvePublicationConfig(config);
+  if (publicationConfig.status === "invalid")
+    throw new Error(
+      `Noa metadata publication config invalid: ${publicationConfig.error}`,
+    );
   if (new URL(config.publicBaseUrl).protocol !== "https:")
     throw new Error("PUBLIC_BASE_URL must use HTTPS");
   const nowMs = Date.now();
@@ -98,12 +111,21 @@ export async function createSignRequest(
   const expiresAt = new Date(
     Math.min(nowMs + 24 * 60 * 60_000, Date.parse(timing.sign_before)),
   ).toISOString();
+  const snapshot = buildSnapshot({
+    spec_json: input.spec_json,
+    spec_hash: input.spec_hash,
+    title: input.title,
+    token_id: input.token_id || config.marketToken,
+    outcomes: input.outcomes,
+    description,
+  });
   const request = store.create(
     params,
     input.spec_json,
     input.spec_hash,
     plan,
     expiresAt,
+    snapshot,
   );
   const url = `${config.publicBaseUrl.replace(/\/$/, "")}/sign/${request.id}`;
   const qr_png_data_url = await QRCode.toDataURL(url, {
@@ -115,6 +137,11 @@ export async function createSignRequest(
     qr_png_data_url,
     expires_at: request.expires_at,
     spec_hash: request.spec_hash,
+    metadata_digest: snapshot.metadata_digest,
+    description: snapshot.description,
+    description_is_fallback:
+      description === undefined || description.trim() === "",
+    publication: publicationConfig.status,
     sign_before: timing.sign_before,
     requested_close_at: requestedCloseAt,
     now_utc: new Date(nowMs).toISOString(),
@@ -132,8 +159,30 @@ export async function createSignRequest(
   };
 }
 
+/** Legacy pending rows get one deterministic snapshot, frozen before review/signing. */
+export function ensureSnapshot(
+  config: Config,
+  store: SignStore,
+  request: SignRequest,
+): SignRequest {
+  if (request.snapshot || request.status !== "pending") return request;
+  store.freezeSnapshot(
+    request.id,
+    buildSnapshot({
+      spec_json: request.spec_json,
+      spec_hash: request.spec_hash,
+      title: request.params.title,
+      token_id: request.params.token_id ?? config.marketToken,
+      outcomes: request.params.outcomes,
+    }),
+  );
+  return store.get(request.id) ?? request;
+}
+
 export function publicRequest(config: Config, request: SignRequest) {
-  const rendered = renderRules(request.spec_json);
+  const rendered = request.snapshot
+    ? { rules_markdown: request.snapshot.rules }
+    : renderRules(request.spec_json);
   const spec = JSON.parse(request.spec_json) as Record<string, any>;
   const url = `${config.publicBaseUrl.replace(/\/$/, "")}/sign/${request.id}`;
   return {
@@ -154,6 +203,10 @@ export function publicRequest(config: Config, request: SignRequest) {
     },
     spec_hash: request.spec_hash,
     rules_markdown: rendered.rules_markdown,
+    description: request.snapshot?.description ?? null,
+    renderer_version: request.snapshot?.renderer_version ?? null,
+    metadata_digest: request.snapshot?.metadata_digest ?? null,
+    publication: publicationView(config, request),
     spec_summary: {
       question: spec.question,
       observation: spec.observation,
@@ -186,6 +239,11 @@ export async function planForAccount(
     );
   if (!/^[a-z0-9._-]{2,64}$/.test(accountId))
     throw new Error("invalid NEAR account ID");
+  const publicationConfig = resolvePublicationConfig(deps.config);
+  if (publicationConfig.status === "invalid")
+    throw new SignPlanConflictError(
+      `Noa metadata publication config invalid; no create transaction will be offered: ${publicationConfig.error}`,
+    );
   const spec = JSON.parse(request.spec_json) as Record<string, any>;
   const observationAt = String(spec.observation?.at ?? "");
   const requestedCloseAt =

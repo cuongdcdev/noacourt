@@ -73,6 +73,11 @@ export function loadConfig() {
     signMarginMinutes: nonnegativeInteger("SIGN_MARGIN_MINUTES", 3),
     triggerGraceSeconds: number("TRIGGER_GRACE_SECONDS", 70),
     keeperEnabled: env("KEEPER_ENABLED", "1") === "1",
+    // Noa metadata publication (see sign/publication.ts). Empty = not configured.
+    noaApiUrl: process.env.NOA_API_URL?.trim() || "",
+    noaAuthRecipient: process.env.NOA_AUTH_RECIPIENT?.trim() || "",
+    noaMarketUrlBase: process.env.NOA_MARKET_URL_BASE?.trim() || "",
+    publicationVerifyPerMin: number("PUBLICATION_VERIFY_PER_MIN", 12),
   };
 }
 

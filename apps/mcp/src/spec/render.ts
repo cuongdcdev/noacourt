@@ -15,6 +15,8 @@ const print = (value: unknown) =>
       ? value
       : jcs(value);
 
+export const RENDERER_VERSION = "rules-v1";
+
 export function renderRules(input: unknown, simulatedSha?: string | null) {
   const spec = parseSpec(input);
   delete spec.rules_text_hash;

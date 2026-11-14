@@ -10,7 +10,28 @@ Court configuration and the local/published resolver hashes refresh in the backg
 
 `GET` and `HEAD /fixtures/:name` serve files from `DATA_DIR/fixtures` with no caching. Allowed file extensions are `.json`, `.xml`, `.rss`, `.html`, and `.txt`. Files can be edited on disk without restarting the server; the route has a separate 600 requests/minute/IP limit and no write endpoint.
 
-The tools are `court_guide`, `catalog_list`, `catalog_tool`, `source_sample`, `spec_lint`, `spec_simulate`, `rules_render`, `market_create_link`, `market_status`, and `verdict_get`. `market_create_link` stores a request in `data/mcp.sqlite` and returns a QR sign URL. It expires at the earlier of 24 hours or the safe signing deadline. `/sign/<id>` uses wallet-selector with Intear, Meteor, and MyNearWallet on testnet. The wallet page refreshes the transaction plan immediately before signing.
+The tools are `court_guide`, `catalog_list`, `catalog_tool`, `source_sample`, `spec_lint`, `spec_simulate`, `rules_render`, `market_create_link`, `market_status`, and `verdict_get`. `market_create_link` stores a request in `data/mcp.sqlite` and returns a QR sign URL. It expires at the earlier of 24 hours or the safe signing deadline. `/sign/<id>` uses wallet-selector with Intear, Meteor (web/extension), Meteor app and HOT Wallet (MyNearWallet is offered only when Noa publication is not configured). The wallet page refreshes the transaction plan immediately before signing.
+
+## Noa description and rules publication
+
+`market_create_link` takes an optional plain-text `description` (max 4000 characters, no control characters); omitted means the rendered rules. It never alters the spec or `spec_hash`. The link stores a frozen snapshot (description, exact rules text, renderer version `rules-v1`, spec hash, `metadata_digest`) in new nullable `sign_requests` columns, added by an automatic migration. The sign page shows description, rules, spec hash and digest before signing. Legacy pending rows get one deterministic snapshot on first read; legacy completed rows report `legacy_unavailable` and are never published.
+
+| Env var                      | Meaning                                                                                                                          |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `NOA_API_URL`                | Noa API base the browser publishes to and the server reads back (mainnet default `https://noamarket.xyz/api-proxy`).             |
+| `NOA_AUTH_RECIPIENT`         | NEP-413 recipient; must equal Noa's `AUTH_RECIPIENT` (mainnet default `noamarket.near`; testnet recipients must end `.testnet`). |
+| `NOA_MARKET_URL_BASE`        | Market page prefix; `<base><market_id>` is the published link (mainnet default `https://noamarket.xyz/markets/`).                |
+| `PUBLICATION_VERIFY_PER_MIN` | Read-back requests per sign request and IP per minute (default 12).                                                              |
+
+URLs must be `https` (or `http` on localhost/127.0.0.1) without credentials, query or fragment. If none of the three is set (the testnet default) publication is **disabled**: the sign page shows a banner and the create flow is unchanged. If any is set, all three must be valid; otherwise the config is invalid and new links and create transactions are refused with a visible error. The browser only receives these values from the server.
+
+Local run against a Noa API on `http://localhost:3401` (frontend on 3411): `PUBLIC_BASE_URL` must still be HTTPS for link creation; set `NOA_API_URL=http://localhost:3401 NOA_AUTH_RECIPIENT=noamarket.testnet NOA_MARKET_URL_BASE=http://localhost:3411/markets/`. Noa's `CORS_ORIGINS` must include the exact sign-page origin (for example `http://localhost:3310`) and the API must accept the `Authorization` and `Content-Type` headers. An HTTPS sign page cannot call a plain-HTTP remote API (mixed content); localhost is exempt.
+
+Publication states (`GET /api/sign/<id>` → `publication.state`, `market_status.metadata_publication`): `not_started`, `auth_required`, `publishing`, `awaiting_verification`, `published`, `retryable_error`, `conflict`, `legacy_unavailable`, `disabled`. `POST /api/sign/<id>/publication/verify` (no body, no token) reads the configured Noa market and compares description and rules byte-for-byte; only it can set `published`. `POST /api/sign/<id>/publication/report` lets the page persist progress with a fixed error code, never `published`. Noa metadata is write-once: identical retry is 200 `already_published`, different content is 409 (`conflict`, stop, never overwritten), a different account is 403. Recovery order: read-back first; missing leads to login (if needed) and the identical POST; 401 renews login once; 409/403 stop; 429/5xx/network get bounded backoff. Creation is never repeated. The reopened sign page of a completed request always shows the publication panel.
+
+Wallets: Meteor (web/extension via `meteor-wallet`, app via `meteor-wallet-app`), Intear and HOT Wallet, all `@near-wallet-selector` 10.1.4 modules that implement `signMessage`; the page calls it without `callbackUrl`, matching Noa's `callbackUrl: null` verification. A mobile/redirect wallet matrix is untested. MyNearWallet, metadata backfill of old markets and mainnet activation are out of scope.
+
+`e2e/publish/run.ts <sign-request-id> <creator-key-file>` is a Node "stub wallet": it signs the Noa login with a testnet key file (read in-process, never printed), publishes through the same `noaPublish` module and calls the verify endpoint.
 
 ## MCP client setup
 
