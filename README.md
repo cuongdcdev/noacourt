@@ -1,10 +1,15 @@
 # Noa Court
+<img width="2143" height="1289" alt="image" src="https://github.com/user-attachments/assets/c2a6bef5-1134-4eed-8273-9ca806f8b319" />
 
 **An AI resolver for prediction markets, running live on NEAR mainnet.** Resolution rules are locked as a hashed spec before trading, the sources are tested against real data, and the outcome is decided inside an [OutLayer](https://outlayer.ai) TEE. When evidence is missing or ambiguous, the market is voided and bettors are refunded.
 
 ## Demo video (2 min)
 
-[![Noa Court demo: market resolved by Noa Court in an OutLayer TEE](docs/media/demo-thumb.png)](docs/media/noacourt-demo.mp4)
+
+
+
+[![Noa Court demo: market resolved by Noa Court in an OutLayer TEE](<img width="2143" height="1289" alt="image" src="https://github.com/user-attachments/assets/505f2196-16e9-4f7a-b267-e2d791e8d7d1" />
+)](docs/media/noacourt-demo.mp4)
 
 ▶ [Watch the demo (MP4, 1:55)](docs/media/noacourt-demo.mp4): an agent drafts a market in plain words, the creator reviews and signs, and Court resolves it in the TEE.
 
@@ -37,6 +42,9 @@ MCP server ── creator signs ──► Court.register_spec ──► Noa.crea
 ```
 
 The verifiable fetch, extract, and decide path runs in an OutLayer TEE for normal resolution. Drafting, source sampling, lint, simulation, wallet links, and the permissionless keeper run off chain. A keeper can trigger, link, retry, void, and finalize eligible operations; it cannot choose the outcome. Court validates the resolver's spec hash and outcome before recording a receipt. For text questions, the resolver asks three NEAR AI jurors to judge untrusted evidence and requires three valid agreeing votes. See the [spec reference](docs/SPEC.md) and [architecture](docs/ARCHITECTURE.md).
+
+
+<img width="2344" height="1105" alt="image" src="https://github.com/user-attachments/assets/a417e6af-8b71-49b3-8c7c-30fb32d35bd3" />
 
 ## Verify in 5 minutes
 
