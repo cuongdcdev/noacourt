@@ -289,7 +289,7 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
     "/public",
     express.static(resolve(process.cwd(), "dist/public"), {
       index: false,
-      maxAge: "1h",
+      maxAge: 0, // always revalidate (ETag) so a new sign.js reaches wallets immediately
     }),
   );
   app.get("/sign/:id", (req, res) => {

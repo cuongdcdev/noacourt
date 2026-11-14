@@ -16,7 +16,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json && pnpm build:page",
-    "build:page": "esbuild src/sign/page/main.ts --bundle --format=esm --platform=browser --target=es2022 --alias:util=./node_modules/util/util.js --alias:buffer=./node_modules/buffer/index.js --outfile=dist/public/sign.js --minify",
+    "build:page": "esbuild src/sign/page/main.ts --bundle --format=esm --platform=browser --target=es2022 --define:global=globalThis --inject:src/sign/page/process-shim.ts --alias:util=./node_modules/util/util.js --alias:buffer=./node_modules/buffer/index.js --outfile=dist/public/sign.js --minify",
     "start": "node dist/index.js",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json"
