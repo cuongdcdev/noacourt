@@ -501,7 +501,7 @@ describe("publication server flow", () => {
     ...baseConfig,
     dataDir: dir,
     resolverWasm: wasmPath,
-    publicBaseUrl: "https://noacourtmcp.junstudio.xyz",
+    publicBaseUrl: "https://court.noamarket.xyz",
     keeperEnabled: false,
     nearNetwork: "testnet",
     noaApiUrl: "http://localhost:3401",
@@ -989,7 +989,7 @@ describe("publication disabled/invalid deployments", () => {
     ...baseConfig,
     dataDir: dir,
     resolverWasm: wasmPath,
-    publicBaseUrl: "https://noacourtmcp.junstudio.xyz",
+    publicBaseUrl: "https://court.noamarket.xyz",
     keeperEnabled: false,
     nearNetwork: "testnet",
   } as any;

@@ -150,7 +150,7 @@ describe("noa_rules freezing and /spec/:hash", () => {
     ...baseConfig,
     dataDir: dir,
     resolverWasm: wasmPath,
-    publicBaseUrl: "https://noacourtmcp.junstudio.xyz",
+    publicBaseUrl: "https://court.noamarket.xyz",
     keeperEnabled: false,
     nearNetwork: "testnet",
     noaApiUrl: "",
@@ -220,7 +220,7 @@ describe("noa_rules freezing and /spec/:hash", () => {
     );
     expect(frozen.rules).toMatch(
       new RegExp(
-        `\\n\\nResolved by Noa Court in an OutLayer TEE\\. Spec sha256:${hex}\\nFull rules: https://noacourtmcp\\.junstudio\\.xyz/spec/${hex}$`,
+        `\\n\\nResolved by Noa Court in an OutLayer TEE\\. Spec sha256:${hex}\\nFull rules: https://court\\.noamarket\\.xyz/spec/${hex}$`,
       ),
     );
     expect(frozen.renderer_version).toBe("noa-rules-v1");

@@ -63,7 +63,7 @@ export function loadConfig() {
   return {
     port: number("PORT", 3330),
     host: env("HOST", "127.0.0.1"),
-    publicBaseUrl: env("PUBLIC_BASE_URL", "https://noacourtmcp.junstudio.xyz"),
+    publicBaseUrl: env("PUBLIC_BASE_URL", "https://court.noamarket.xyz"),
     nearNetwork: network as "testnet" | "mainnet",
     nearRpcUrls: env("NEAR_RPC_URLS", d.rpcs)
       .split(",")

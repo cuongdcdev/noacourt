@@ -5,7 +5,7 @@ description: Draft, simulate, and inspect Noa Court prediction-market resolution
 
 # Noa Court
 
-Connect to `https://court.noamarket.xyz/mcp` and call `court_guide` first. The service root returns JSON discovery and documentation links. The service runs on NEAR mainnet (Court `ai-resolver.noamarket.near`, Noa `v3.noamarket.near`). A testnet staging instance exists at `https://noacourtmcp.junstudio.xyz/mcp`; keep the two networks distinct and check `network` in the tool responses.
+Connect to `https://court.noamarket.xyz/mcp` and call `court_guide` first. The service root returns JSON discovery and documentation links. The service runs on NEAR mainnet (Court `ai-resolver.noamarket.near`, Noa `v3.noamarket.near`). Check `network` in the tool responses.
 
 ## Workflow
 

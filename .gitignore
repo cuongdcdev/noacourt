@@ -15,3 +15,8 @@ dist/
 *.log
 noacourtv1.md
 deploy/
+
+# Internal notes and agent tooling (not part of the product)
+SESSION_HANDOFF.md
+.claude/
+.agents/

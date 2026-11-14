@@ -45,7 +45,7 @@ Both trigger methods require prepaid gas of at least `outlayer_gas_tgas + min(50
 
 ### Verified on testnet
 
-The generic flow above was exercised as `req:1`, signed by `user5.noamarket.testnet`: [`request_resolution`](https://testnet.nearblocks.io/txns/EwTtoX8cAJBDUZWJrYnKchPdbnkQa8dnNJCuxnoXwPrZ), then the permissionless keeper's [`trigger_request`](https://testnet.nearblocks.io/txns/2FjTEHWCp6Um7Ro8NSgqGd4ukjz7i2qWAEsxJ1dtP9GA). `get_verdict({"id":"req:1"})` returned `resolved` / `Yes`, value `3.401`, `tee: true`, `submitted_by: "outlayer"`, attempt 2. The testnet resolver is pinned to WASM SHA-256 `a8efb56c2f9fe31c2d857686d8b97179b15d8529a17984bfd31fc3f97ef6ce40`. All first-wave market scenarios (A1–A4, A6–A9) passed; receipts and checks are in [E2E_RESULTS.md](../E2E_RESULTS.md). A6–A9 fixtures are served at `https://noacourtmcp.junstudio.xyz/fixtures/<name>` and labelled `self_declared`, outside the verified-source host list.
+The generic flow above was exercised as `req:1`, signed by `user5.noamarket.testnet`: [`request_resolution`](https://testnet.nearblocks.io/txns/EwTtoX8cAJBDUZWJrYnKchPdbnkQa8dnNJCuxnoXwPrZ), then the permissionless keeper's [`trigger_request`](https://testnet.nearblocks.io/txns/2FjTEHWCp6Um7Ro8NSgqGd4ukjz7i2qWAEsxJ1dtP9GA). `get_verdict({"id":"req:1"})` returned `resolved` / `Yes`, value `3.401`, `tee: true`, `submitted_by: "outlayer"`, attempt 2. The testnet resolver is pinned to WASM SHA-256 `a8efb56c2f9fe31c2d857686d8b97179b15d8529a17984bfd31fc3f97ef6ce40`. All first-wave market scenarios (A1–A4, A6–A9) passed; receipts and checks are in [E2E_RESULTS.md](../E2E_RESULTS.md). A6–A9 fixtures were served by the testnet MCP host (now retired) and labelled `self_declared`, outside the verified-source host list.
 
 Court invokes the optional callback once for a final generic result with `{"request_id":"req:1","verdict":<full get_verdict record>}`. It uses 20 TGas, zero deposit, and does not wait for a return value. A minimal near-sdk 5 consumer is:
 
@@ -164,7 +164,7 @@ For a market created in another UI or by CLI with a different or empty `metadata
 
 ## MCP for agents
 
-The public endpoint is `https://court.noamarket.xyz/mcp` (stateless Streamable HTTP, no auth, about 60 requests/minute/IP); `https://court.noamarket.xyz/healthz` reports service health. The testnet staging instance is `https://noacourtmcp.junstudio.xyz/mcp`. Add it in Claude Code with:
+The public endpoint is `https://court.noamarket.xyz/mcp` (stateless Streamable HTTP, no auth, about 60 requests/minute/IP); `https://court.noamarket.xyz/healthz` reports service health. Add it in Claude Code with:
 
 ```sh
 claude mcp add --transport http noacourt https://court.noamarket.xyz/mcp

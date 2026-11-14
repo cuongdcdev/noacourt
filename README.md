@@ -2,6 +2,57 @@
 
 **An AI resolver for prediction markets, running live on NEAR mainnet.** Resolution rules are locked as a hashed spec before trading, the sources are tested against real data, and the outcome is decided inside an [OutLayer](https://outlayer.ai) TEE. When evidence is missing or ambiguous, the market is voided and bettors are refunded.
 
+## Demo video (2 min)
+
+[![Noa Court demo: market resolved by Noa Court in an OutLayer TEE](docs/media/demo-thumb.png)](docs/media/noacourt-demo.mp4)
+
+▶ [Watch the demo (MP4, 1:55)](docs/media/noacourt-demo.mp4): an agent drafts a market in plain words, the creator reviews and signs, and Court resolves it in the TEE.
+
+## For reviewers
+
+- **Problem.** Prediction markets need someone to decide the outcome. Human or optimistic-oracle resolution is slow and disputable, and a bare "ask an LLM" resolver can be prompt-injected or guess when the evidence is missing.
+- **What we built.** A NEAR contract (Court), a pinned WASM resolver that runs in an OutLayer TEE, and a public MCP server that lets any agent draft, test and publish a market with locked rules. Numbers are decided by deterministic code; text questions need three NEAR AI jurors to agree; anything unclear is voided and refunded.
+- **NEAR's role.** OutLayer TEE runs the resolver and calls Court back on chain (`tee: true` receipts); NEAR AI Cloud supplies the jurors; the Court contract stores specs and receipts and resolves markets on Noa (`v3.noamarket.near`); NEAR Connect + NEP-413 handle wallet signing. Details: [What NEAR does here](#what-near-does-here).
+- **Proof on mainnet.** Market [#26](#live-markets-on-mainnet) was created through the MCP, resolved `No` in the TEE and finalized; every step has a NearBlocks link. Check it yourself with the commands in [Verify in 5 minutes](#verify-in-5-minutes).
+- **Machine-readable summary:** [llms.txt](llms.txt). Agent guide: [AGENTS.md](AGENTS.md).
+
+## Architecture
+
+```text
+Agent + creator wallet
+  │ draft → sample → lint → simulate → /sign/<id>
+  ▼
+MCP server ── creator signs ──► Court.register_spec ──► Noa.create_market
+  │                                  │                         │
+  └── permissionless keeper ───────► Court.link_market ◄──────┘
+                                     │ trigger after observation.at
+                                     ▼
+                             outlayer.near (testnet: outlayer.testnet)
+                             configured resolver.wasm
+                             fetch → extract → decide
+                                     │ Verdict v1 callback
+                                     ▼
+                              Court receipt ──► Noa resolution
+                                     └─────────► generic callback / get_verdict
+```
+
+The verifiable fetch, extract, and decide path runs in an OutLayer TEE for normal resolution. Drafting, source sampling, lint, simulation, wallet links, and the permissionless keeper run off chain. A keeper can trigger, link, retry, void, and finalize eligible operations; it cannot choose the outcome. Court validates the resolver's spec hash and outcome before recording a receipt. For text questions, the resolver asks three NEAR AI jurors to judge untrusted evidence and requires three valid agreeing votes. See the [spec reference](docs/SPEC.md) and [architecture](docs/ARCHITECTURE.md).
+
+## Verify in 5 minutes
+
+Each step is "do X → see Y". No wallet or API key is needed.
+
+1. `curl -s https://court.noamarket.xyz/healthz` → JSON with service status; the served, published and Court-pinned resolver hashes match (`39e5a6ce…3f6d8c`).
+2. Read the mainnet receipt of market #26 with [near-cli-rs](https://github.com/near/near-cli-rs):
+   ```sh
+   near contract call-function as-read-only ai-resolver.noamarket.near get_verdict json-args '{"id":"noa:26"}' network-config mainnet now
+   ```
+   → outcome `No`, `tee: true`, `submitted_by: "outlayer"`.
+3. `claude mcp add --transport http noacourt https://court.noamarket.xyz/mcp`, then ask: "Use court_guide, sample NEAR/USDT from Binance and OKX, draft and simulate a future two-outcome Court market, then show the rules and a wallet sign link." → a preflight verdict and a `https://court.noamarket.xyz/sign/<id>` link. Nothing is signed unless you open the link and approve in a wallet.
+4. `cd apps/mcp && pnpm install && pnpm test` → 178 tests pass (MCP tools, sign page, keeper, Noa publication).
+5. `cd contracts/court && cargo test --lib` → 21 Court contract unit tests pass.
+6. `bash scripts/build-resolver.sh` → prints the resolver WASM SHA-256; compare it with [`resolver/WASM_SHA256`](resolver/WASM_SHA256) and the hash in step 1.
+
 ## Live on NEAR mainnet
 
 Live since 2026-11-14. Court `ai-resolver.noamarket.near` resolves markets on [Noa](https://noamarket.xyz) (`v3.noamarket.near`). First market resolved and finalized on mainnet: [#26](#live-markets-on-mainnet).
@@ -36,7 +87,7 @@ Resolution runs in an [OutLayer](https://outlayer.ai) TEE. Court calls OutLayer 
 2. **Resolve.** At observation time the keeper triggers the pinned WASM resolver in the OutLayer TEE. It fetches the sources, extracts the value and decides by deterministic code. Text questions go to three NEAR AI Cloud jurors who must all agree.
 3. **Record.** The Court contract checks the verdict, keeps the receipt and resolves the Noa market. If evidence is missing, changed or ambiguous, the market is voided and bettors are refunded.
 
-The keeper links, triggers, retries, voids and finalizes automatically, and cannot choose outcomes. Detail: [How it works (diagram)](#architecture) and [architecture](docs/ARCHITECTURE.md).
+The keeper links, triggers, retries, voids and finalizes automatically, and cannot choose outcomes. Detail: [diagram](#architecture) and [architecture](docs/ARCHITECTURE.md).
 
 ## Screenshots
 
@@ -81,7 +132,7 @@ Market #26 step by step (all on [NearBlocks](https://nearblocks.io/address/ai-re
 1. Open [service health](https://court.noamarket.xyz/healthz) → see the MCP service status and that the served, published and Court-pinned resolver hashes match.
 2. Connect an agent as shown [above](#live-on-near-mainnet) and ask it to draft and simulate a market → see a preflight verdict and a `/sign/<id>` URL.
 3. Open the sign link in a browser → see the review-first sign page: rules generated from the spec, sources with their `verified` / `self_declared` labels, the OutLayer TEE resolver, and the exact transactions (`Court.register_spec`, `Noa.create_market`). Connect a wallet through NEAR Connect to sign. After creation the page asks for a NEP-413 signature and publishes the reviewed description and rules to the Noa market page.
-4. Read [E2E results](E2E_RESULTS.md) → inspect scenario outcomes, transaction hashes, and independent checks (testnet). [Market 86](e2e/mcp-agent/run-20261113T093809Z.md) was created end to end by a Codex CLI agent that used only the public testnet MCP server: 11 MCP calls and no shell commands.
+4. Read [E2E results](E2E_RESULTS.md) → inspect scenario outcomes, transaction hashes, and independent checks (testnet). [Market 86](e2e/mcp-agent/run-20261113T093809Z.md) was created end to end by a Codex CLI agent that used only the public testnet MCP server (since retired): 11 MCP calls and no shell commands.
 5. Follow [integration steps](docs/INTEGRATE.md) → request a generic verdict or create a Noa market.
 
 For agents, read the [Noa Court skill](skills/noa-court/SKILL.md) ([hosted copy](https://court.noamarket.xyz/docs/SKILL.md)). For NEAR token price, market cap and FDV questions, follow the [Intear and JustHoot recipes](docs/NEAR_TOKENS.md) ([hosted copy](https://court.noamarket.xyz/docs/NEAR_TOKENS.md)); one source is the default, with a two-source median offered only as an optional choice.
@@ -99,8 +150,6 @@ near contract call-function as-read-only ai-resolver.noamarket.testnet get_verdi
 
 All first-wave scenarios in [E2E_RESULTS.md](E2E_RESULTS.md) passed. Their Court verdicts have `tee: true` and `submitted_by: "outlayer"`:
 
-All first-wave scenarios in [E2E_RESULTS.md](E2E_RESULTS.md) passed. Their Court verdicts have `tee: true` and `submitted_by: "outlayer"`:
-
 - [A1, market 67](E2E_RESULTS.md): NEAR/USDT threshold → No. The first attempt retried because the candle had not closed; the [second trigger](https://testnet.nearblocks.io/txns/GtfMBy2GmCKKNLjBGbNm7Wppf3VTnZ8ydB92bMrBsDWs) resolved it. The [creation](https://testnet.nearblocks.io/txns/EUkohRdRE3mwvSScTe1BUqHfXKVm8CC33aVozMsLVNWF), [keeper link](https://testnet.nearblocks.io/txns/BeDq3T2vXBRx9MXZ4RnXN2gcXzgwtyDGcNWsRK1gGwoU), [first trigger](https://testnet.nearblocks.io/txns/F9Vnr7LReUPce96ANZMqZQboYkR3jJGwvqvRkbWWPN1m), [finalization](https://testnet.nearblocks.io/txns/6kWLDoBw8prE6FS8Beb4gQKSzoiwL8dbSh2W4HpNypsL), and [claim](https://testnet.nearblocks.io/txns/92W5cP3cF7uzwKVZ21QS1yJqLW3EZR2ajfdUypPugmEn) are also recorded.
 - A8, market 79: a 15-minute RSS `text_judge` market with real opposing bets—user2 [bet Yes](https://testnet.nearblocks.io/txns/7tNvi2wiReAeSjpUnRemSc1pHhqCzsjmHQqwBjr9toUj), user4 [bet No](https://testnet.nearblocks.io/txns/2WKsnVpmNtyc2Rwd1sturW1HCntjTshMHEnhWRuVqaKP). Three NEAR AI jurors agreed on Yes inside the TEE; the [trigger transaction](https://testnet.nearblocks.io/txns/7JnWtdYRhPK5muTsUMC27Bg8nyhd8zBFNsTXhFGR28DL) contains the OutLayer verdict and Noa resolution (`tee: true`). The proposal was [finalized](https://testnet.nearblocks.io/txns/5YESzkVyunsctNaPLPAEypvUonT9NHxfgH8qGyLHbdiL), and the winner [claimed](https://testnet.nearblocks.io/txns/FiUEfZpBLifAVS6r9d3bTfrWWwy1EQsKaniCENHFAkHN).
 - [A2, market 68](E2E_RESULTS.md): BTC price buckets → Flat.
@@ -114,31 +163,7 @@ All first-wave scenarios in [E2E_RESULTS.md](E2E_RESULTS.md) passed. Their Court
 - A9, market 75: a prompt-injection-only post resolved No after three agreeing jurors; the injection phrase was flagged; [trigger and resolution](https://testnet.nearblocks.io/txns/D4zeVBo7kT8nTmtftaqf4HdFFK8NQZorLxJXQEyjDZYw).
 - [Generic request `req:1`](docs/INTEGRATE.md#verified-on-testnet): [`request_resolution` transaction](https://testnet.nearblocks.io/txns/EwTtoX8cAJBDUZWJrYnKchPdbnkQa8dnNJCuxnoXwPrZ) and [keeper trigger](https://testnet.nearblocks.io/txns/2FjTEHWCp6Um7Ro8NSgqGd4ukjz7i2qWAEsxJ1dtP9GA); final verdict Yes, value `3.401`, attempt 2, `tee: true`.
 
-The configured resolver is pinned to WASM SHA-256 `39e5a6ceb7160e1b8eda6f294ff249d00dfe7d250f088848fb64ea1f0c3f6d8c` (resolver v3, [`resolver/WASM_SHA256`](resolver/WASM_SHA256)); `bash scripts/build-resolver.sh` reproduces it. Markets 67–79 ran on the earlier pin `a8efb56c2f9fe31c2d857686d8b97179b15d8529a17984bfd31fc3f97ef6ce40`. Each receipt records the version it ran. [Service health](https://court.noamarket.xyz/healthz) shows that the served, published and Court-pinned hashes match. A6–A9 fixtures are served by the MCP host at `https://noacourtmcp.junstudio.xyz/fixtures/<name>` and labelled `self_declared`; that host is outside the verified-source list.
-
-## Architecture
-
-```text
-Agent + creator wallet
-  │ draft → sample → lint → simulate → /sign/<id>
-  ▼
-MCP server ── creator signs ──► Court.register_spec ──► Noa.create_market
-  │                                  │                         │
-  └── permissionless keeper ───────► Court.link_market ◄──────┘
-                                     │ trigger after observation.at
-                                     ▼
-                             outlayer.near (testnet: outlayer.testnet)
-                             configured resolver.wasm
-                             fetch → extract → decide
-                                     │ Verdict v1 callback
-                                     ▼
-                              Court receipt ──► Noa resolution
-                                     └─────────► generic callback / get_verdict
-```
-
-The verifiable fetch, extract, and decide path runs in an OutLayer TEE for normal resolution. Drafting, source sampling, lint, simulation, wallet links, and the permissionless keeper run off chain. A keeper can trigger, link, retry, void, and finalize eligible operations; it cannot choose the outcome. Court validates the resolver's spec hash and outcome before recording a receipt. For text questions, the resolver asks three NEAR AI jurors to judge untrusted evidence and requires three valid agreeing votes. See the [spec reference](docs/SPEC.md) and [architecture](docs/ARCHITECTURE.md).
-
-The verifiable fetch, extract, and decide path runs in an OutLayer TEE for normal resolution. Drafting, source sampling, lint, simulation, wallet links, and the permissionless keeper run off chain. A keeper can trigger, link, retry, void, and finalize eligible operations; it cannot choose the outcome. Court validates the resolver's spec hash and outcome before recording a receipt. For text questions, the resolver asks three NEAR AI jurors to judge untrusted evidence and requires three valid agreeing votes. See the [spec reference](docs/SPEC.md) and [architecture](docs/ARCHITECTURE.md).
+The configured resolver is pinned to WASM SHA-256 `39e5a6ceb7160e1b8eda6f294ff249d00dfe7d250f088848fb64ea1f0c3f6d8c` (resolver v3, [`resolver/WASM_SHA256`](resolver/WASM_SHA256)); `bash scripts/build-resolver.sh` reproduces it. Markets 67–79 ran on the earlier pin `a8efb56c2f9fe31c2d857686d8b97179b15d8529a17984bfd31fc3f97ef6ce40`. Each receipt records the version it ran. [Service health](https://court.noamarket.xyz/healthz) shows that the served, published and Court-pinned hashes match. A6–A9 fixtures ([`fixtures/`](fixtures)) were served by the testnet MCP host, now retired, and labelled `self_declared`; that host was outside the verified-source list.
 
 ## What NEAR does here
 
@@ -157,9 +182,9 @@ The `/sign` page supplies Noa's existing free-form `metadata_hash` as `"noacourt
 
 ## Networks and deployment
 
-| | Mainnet (live 2026-11-14) | Testnet (staging) |
+| | Mainnet (live 2026-11-14) | Testnet (retired; on-chain records remain) |
 | --- | --- | --- |
-| MCP | `https://court.noamarket.xyz/mcp` | `https://noacourtmcp.junstudio.xyz/mcp` |
+| MCP | `https://court.noamarket.xyz/mcp` | retired |
 | Court contract | [`ai-resolver.noamarket.near`](https://nearblocks.io/address/ai-resolver.noamarket.near) | `ai-resolver.noamarket.testnet` |
 | Owner / keeper | `court-ops.noamarket.near` (treasury `treasury.noamarket.near`) | `court-ops.noamarket.testnet` (OutLayer project owner) |
 | Noa market | `v3.noamarket.near` ([app](https://noamarket.xyz)) | `v3.noamarket.testnet` |
@@ -210,8 +235,9 @@ Run each command block from the repository root in a fresh shell.
 From the repository root, run the resolver build and saved lint example:
 
 ```sh
+# needs Rust 1.96.0 with the wasm32-wasip2 target, and wasmtime (https://wasmtime.dev)
 bash scripts/build-resolver.sh
-/root/.wasmtime/bin/wasmtime run -S http target/wasm32-wasip2/release/resolver.wasm < resolver/examples/a1_near_threshold.lint.input.json
+wasmtime run -S http target/wasm32-wasip2/release/resolver.wasm < resolver/examples/a1_near_threshold.lint.input.json
 ```
 
 Run Court contract unit tests and build from its standalone workspace:
@@ -240,3 +266,6 @@ cd e2e && pnpm install && pnpm e2e A1 --dry-run
 
 See the [Court](contracts/court/README.md), [resolver](resolver/README.md), and [MCP](apps/mcp/README.md) READMEs for local runtime details.
 
+## License
+
+MIT. See [LICENSE](LICENSE).

@@ -193,14 +193,14 @@ export type GuideContext = {
 
 export function courtGuide(ctx: GuideContext = {}): string {
   const text = renderGuide();
-  const base = (ctx.baseUrl || "https://noacourtmcp.junstudio.xyz").replace(
+  const base = (ctx.baseUrl || "https://court.noamarket.xyz").replace(
     /\/+$/,
     "",
   );
   const network = ctx.network || "testnet";
   const header = `Network: ${network}${ctx.courtContract ? `. Court contract ${ctx.courtContract}` : ""}${ctx.noaContract ? `, Noa contract ${ctx.noaContract}` : ""}${ctx.token ? `, default token ${ctx.token}` : ""}. ${network === "mainnet" ? "This is NEAR mainnet: markets, stakes and fees use real funds." : "This is NEAR testnet: markets and tokens have no real value."}\n\n`;
   return text
-    .replaceAll("https://noacourtmcp.junstudio.xyz", base)
+    .replaceAll("https://court.noamarket.xyz", base)
     .replace("now_utc:", `${header}now_utc:`);
 }
 
@@ -212,7 +212,7 @@ now_utc: ${new Date().toISOString()}.
 
 Flow: lint → simulate → rules_render → (pick token and stake: list_whitelisted_tokens) → write noa_rules (required) → market_create_link → user signs in their wallet. The creator chooses the market token (\`token_id\`, any active Noa-whitelisted token, default NPOINT) and a custom stake, which is the market liquidity, in that token's units; call \`list_whitelisted_tokens\` (with \`outcome_count\`) first to see tokens, decimals and the minimum stake, because a stake below the minimum is rejected. The server never needs a creator private key. \`market_create_link\` takes \`noa_rules\` (REQUIRED step in this workflow: the human-readable resolution rules traders read on Noa; see "Noa rules" below) and an optional \`description\` (one or two plain sentences of context for traders; do not repeat the rules). Neither changes the spec or its hash. The sign page shows the Noa rules first, then the binding canonical rules, the spec hash and a metadata digest for the creator to review, freezes them, and, when the deployment has Noa publication configured, asks the creator to sign a Noa login (NEP-413) before the create transactions and publishes description + rules to Noa afterwards (write-once; \`market_status.metadata_publication\` reports the state). Write the Noa rules to agree with the spec; if they contradict it, create a new link instead. The sign link states a sign-before time, and its plan is recalculated when the user signs. Integration: docs/ARCHITECTURE.md §5–§7.
 
-Documentation: https://noacourtmcp.junstudio.xyz/docs/README.md (overview), https://noacourtmcp.junstudio.xyz/docs/MCP.md (MCP setup), https://noacourtmcp.junstudio.xyz/docs/SPEC.md (specification), https://noacourtmcp.junstudio.xyz/docs/ARCHITECTURE.md (architecture), https://noacourtmcp.junstudio.xyz/docs/INTEGRATE.md (integration), https://noacourtmcp.junstudio.xyz/docs/NEAR_TOKENS.md (NEAR token recipes), https://noacourtmcp.junstudio.xyz/docs/SKILL.md (agent skill).
+Documentation: https://court.noamarket.xyz/docs/README.md (overview), https://court.noamarket.xyz/docs/MCP.md (MCP setup), https://court.noamarket.xyz/docs/SPEC.md (specification), https://court.noamarket.xyz/docs/ARCHITECTURE.md (architecture), https://court.noamarket.xyz/docs/INTEGRATE.md (integration), https://court.noamarket.xyz/docs/NEAR_TOKENS.md (NEAR token recipes), https://court.noamarket.xyz/docs/SKILL.md (agent skill).
 
 ## Noa rules (required: write \`noa_rules\` for every market)
 Noa shows the published rules to traders as plain text (no markdown rendering). Before calling \`market_create_link\`, write \`noa_rules\` in this exact format and show it to the creator:

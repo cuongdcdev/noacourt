@@ -159,14 +159,14 @@ describe("MCP HTTP", () => {
     const discovery = await home.json();
     expect(discovery.name).toBe("Noa Court");
     expect(discovery.mcp_endpoint).toBe(
-      "https://noacourtmcp.junstudio.xyz/mcp",
+      "https://court.noamarket.xyz/mcp",
     );
     expect(discovery.start_here).toContain("court_guide");
     expect(discovery.docs.integration).toBe(
-      "https://noacourtmcp.junstudio.xyz/docs/INTEGRATE.md",
+      "https://court.noamarket.xyz/docs/INTEGRATE.md",
     );
     expect(discovery.docs.near_tokens).toBe(
-      "https://noacourtmcp.junstudio.xyz/docs/NEAR_TOKENS.md",
+      "https://court.noamarket.xyz/docs/NEAR_TOKENS.md",
     );
     for (const name of [
       "README.md",

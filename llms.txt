@@ -20,9 +20,9 @@ Health: https://court.noamarket.xyz/healthz
 - Noa market: `v3.noamarket.near` (app https://noamarket.xyz); default token `npoint.noamarket.near`
 - OutLayer: `outlayer.near`, project `court-ops.noamarket.near/court-resolver`
 - Resolver WASM SHA-256: `39e5a6ceb7160e1b8eda6f294ff249d00dfe7d250f088848fb64ea1f0c3f6d8c`
-- No mainnet market has been created or resolved through Court yet; all evidence below is from testnet.
+- First mainnet market: #26, created through the MCP, resolved `No` in the OutLayer TEE (`tee: true`) and finalized on 2026-11-14. Query `get_verdict({"id":"noa:26"})` on `ai-resolver.noamarket.near`. Earlier scenario evidence below is from testnet.
 
-## Testnet IDs (staging: https://noacourtmcp.junstudio.xyz/mcp)
+## Testnet IDs (testnet instance retired; on-chain records remain)
 
 - Court: `ai-resolver.noamarket.testnet`
 - Noa market: `v3.noamarket.testnet`
@@ -41,7 +41,7 @@ Health: https://court.noamarket.xyz/healthz
 - [A8 market 73](https://testnet.nearblocks.io/txns/HMUwVHVvegxTKANcMiGvToiynC32BdRid28q9A1skBNt), [A8n market 74](https://testnet.nearblocks.io/txns/6vNnXRHexjnu1W699kqsLiSUnYgoDWuYiN9MFgnmTdFB), and [A9 market 75](https://testnet.nearblocks.io/txns/D4zeVBo7kT8nTmtftaqf4HdFFK8NQZorLxJXQEyjDZYw): text evidence resolved Yes, No, and No respectively.
 - [Generic `req:1`](https://testnet.nearblocks.io/txns/EwTtoX8cAJBDUZWJrYnKchPdbnkQa8dnNJCuxnoXwPrZ): request followed by [keeper trigger](https://testnet.nearblocks.io/txns/2FjTEHWCp6Um7Ro8NSgqGd4ukjz7i2qWAEsxJ1dtP9GA); resolved Yes, value `3.401`, attempt 2, `tee: true`.
 
-The first-wave verdicts have `tee: true` and `submitted_by: "outlayer"`. A6–A9 fixtures are served at `https://noacourtmcp.junstudio.xyz/fixtures/<name>` and labelled `self_declared`; this host is not in the verified-source list.
+The first-wave verdicts have `tee: true` and `submitted_by: "outlayer"`. A6–A9 fixtures were served by the testnet MCP host (now retired) and labelled `self_declared`; that host was not in the verified-source list.
 
 One A8 rerun, [market 78](https://testnet.nearblocks.io/txns/9uRxS8JUQHuK9a4L9foWgYySgsHSX3nurkToArzkUgsx), had two OutLayer execution failures returning null. Court rejected them and the market was voided without a wrong outcome; the failure is under investigation.
 

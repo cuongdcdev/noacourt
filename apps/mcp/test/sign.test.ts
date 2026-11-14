@@ -227,7 +227,7 @@ describe("sign request HTTP", () => {
     ...loadConfig(),
     dataDir: dir,
     resolverWasm: wasmPath,
-    publicBaseUrl: "https://noacourtmcp.junstudio.xyz",
+    publicBaseUrl: "https://court.noamarket.xyz",
     keeperEnabled: false,
   };
   const rendered = renderRules(examples.A1);
@@ -328,7 +328,7 @@ describe("sign request HTTP", () => {
   it("stores a full plan, returns a QR of exactly the sign URL, and serves the page", async () => {
     const created = await createSignRequest(config, store, params);
     expect(created.url).toMatch(
-      /^https:\/\/noacourtmcp\.junstudio\.xyz\/sign\/[A-Za-z0-9_-]{22}$/,
+      /^https:\/\/court\.noamarket\.xyz\/sign\/[A-Za-z0-9_-]{22}$/,
     );
     expect(created.qr_png_data_url).toMatch(/^data:image\/png;base64,/);
     const id = created.url.split("/").at(-1)!;

@@ -18,7 +18,7 @@ This file is the contract between components. Change it only through an OpenSpec
 | `crates/court-core` | ResolutionSpec types, canonical hash, lint, source adapters, decide, Verdict | Rust lib (std) |
 | `resolver/` | `resolver.wasm`: wasm32-wasip2 binary wrapping court-core; reads input JSON on stdin, writes Verdict JSON on stdout | Rust |
 | `contracts/court` | Court contract deployed at `ai-resolver.noamarket.testnet` | Rust, near-sdk 5 |
-| `apps/mcp` | Remote MCP server + `/sign/<id>` page + keeper loop, served at `https://noacourtmcp.junstudio.xyz` | TypeScript, Node 22 |
+| `apps/mcp` | Remote MCP server + `/sign/<id>` page + keeper loop, served at `https://court.noamarket.xyz` | TypeScript, Node 22 |
 | `fixtures/` | Test evidence we control (published as GitHub gists) | JSON/RSS |
 
 Trust split (owner rule, kent-notes 2026-11-12): only fetch → extract → decide must be verifiable,
@@ -97,7 +97,7 @@ Tools that produce specs MUST emit canonical JSON (RFC 8785 JCS) so the same spe
 | `coingecko_price` | `id`, `vs` | day-level only (no minute granularity on free API) |
 | `near_view` | `network`, `contract`, `method`, `args`, `rpcs` (≥2, must agree) | uses block at/after `at` when `mode = historical` is not possible → `first_fetch_after` |
 | `github_repo` | `owner`, `repo`, `field` (stargazers_count…); identity assert on repo `id` | snapshot |
-| `http_json` | see SESSION_HANDOFF §6 (`request`, `expect.assert[]`, `identity`, `extract.path` RFC 9535, no positional index unless `extract.allow_index: true` + `index_reason`, `type`, `decimals`, `sanity`) | core tool |
+| `http_json` | see [SPEC](SPEC.md) (`request`, `expect.assert[]`, `identity`, `extract.path` RFC 9535, no positional index unless `extract.allow_index: true` + `index_reason`, `type`, `decimals`, `sanity`) | core tool |
 | `rss_feed` | `url`, item filter (window) | evidence for text_judge |
 | `web_text` | `url` (static HTML, scripts/tags stripped) | evidence for text_judge |
 
@@ -180,7 +180,7 @@ All verdicts (full Verdict JSON + OutLayer request info) are stored on-chain for
 | `spec_simulate` | run the pinned `resolver.wasm` (same sha256 as Court config) with wasmtime, mode=simulate |
 | `rules_render` | rules text from spec (template) + `rules_text_hash`; returns canonical `spec_json` + `spec_hash` |
 | `list_whitelisted_tokens` | read-only: Noa whitelist (60 s cache) + NEP-148 symbol/name + min stake (BigInt port of `b >= min_b_shares_fp`, `src/noa/stake.ts`) |
-| `market_create_link` | params (title, outcomes, token, stake, duration, spec_json, creator?) → `https://noacourtmcp.junstudio.xyz/sign/<id>` + QR (PNG data URL) |
+| `market_create_link` | params (title, outcomes, token, stake, duration, spec_json, creator?) → `https://court.noamarket.xyz/sign/<id>` + QR (PNG data URL) |
 | `market_status` | Noa market + Court state + latest verdict |
 | `verdict_get` | receipt for a market or generic request |
 
