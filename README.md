@@ -67,7 +67,7 @@ Market #26 step by step (all on [NearBlocks](https://nearblocks.io/address/ai-re
 2. The reviewed description and rules were published to Noa with the creator's NEP-413 login and verified by read-back.
 3. Two traders bet 50 NPOINT each: [Yes](https://nearblocks.io/txns/9JDirAV774giJBFQZSpAttfmjZQWNyvqXFk8fxa74P8Y), [No](https://nearblocks.io/txns/MLtb4H5VbkHJTm161Jqs5gQitgf9EHfHcYcGSy6jhj1).
 4. At 19:28 UTC + 70 s the keeper [triggered](https://nearblocks.io/txns/8A3AQWuJEaNmH8fsXWjyJBw1kRLCbZK2pkqF4bTfSZDu) Court. OutLayer ran the pinned resolver `39e5a6ce…` in a TEE, which fetched Binance (3.092, used) and OKX (3.093, fallback). Court accepted the verdict `No` with `tee: true` at 19:29:33 UTC and proposed it to Noa.
-5. After Noa's 60-minute dispute window the keeper [finalized](https://nearblocks.io/txns/AG7B9991kRwMDLJ45fhnScohDaASzniuB7KwNVhtHxGd) the market.
+5. After Noa's 60-minute dispute window the keeper [finalized](https://nearblocks.io/txns/AG7B9991kRwMDLJ45fhnScohDaASzniuB7KwNVhtHxGd) the market. The No bettor [claimed](https://nearblocks.io/txns/9SkEudErvURUWcEiZepYkAti9U9xwCs8usBTJyaRAopA) 86.56 NPOINT. Full run log: [run-mainnet-20261114T185017Z.md](e2e/mcp-agent/run-mainnet-20261114T185017Z.md).
 
 ## Status and limits
 

@@ -12,16 +12,25 @@ import {
 
 const USER_AGENT =
   "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
-const RPC_URLS = [
-  "https://test.rpc.fastnear.com",
-  "https://rpc.testnet.near.org",
-  "https://archival-rpc.testnet.fastnear.com",
-];
+// NETWORK=mainnet switches RPC, contracts, credentials dir and default sign base.
+const NETWORK = process.env.NETWORK === "mainnet" ? "mainnet" : "testnet";
+const RPC_URLS =
+  NETWORK === "mainnet"
+    ? ["https://rpc.mainnet.fastnear.com", "https://rpc.mainnet.near.org"]
+    : [
+        "https://test.rpc.fastnear.com",
+        "https://rpc.testnet.near.org",
+        "https://archival-rpc.testnet.fastnear.com",
+      ];
 const SIGN_BASE = (
-  process.env.SIGN_BASE || "https://noacourtmcp.junstudio.xyz"
+  process.env.SIGN_BASE ||
+  (NETWORK === "mainnet"
+    ? "https://court.noamarket.xyz"
+    : "https://noacourtmcp.junstudio.xyz")
 ).replace(/\/$/, "");
-const NOA = "v3.noamarket.testnet";
-const TOKEN = "point.noamarket.testnet";
+const NOA = NETWORK === "mainnet" ? "v3.noamarket.near" : "v3.noamarket.testnet";
+const TOKEN =
+  NETWORK === "mainnet" ? "npoint.noamarket.near" : "point.noamarket.testnet";
 const TGAS = "100000000000000";
 const YOCTO = 10n ** 24n;
 
@@ -175,7 +184,7 @@ class Rpc {
       }
     }
     throw new Error(
-      `${method} failed across testnet RPC endpoints: ${errorText(lastError)}`,
+      `${method} failed across ${NETWORK} RPC endpoints: ${errorText(lastError)}`,
     );
   }
 
@@ -234,7 +243,7 @@ async function loadSigner(account: string): Promise<KeyPairSigner> {
   const path = join(
     homedir(),
     ".near-credentials",
-    "testnet",
+    NETWORK,
     `${account}.json`,
   );
   let credentials: { account_id?: string; private_key?: string };
@@ -243,10 +252,10 @@ async function loadSigner(account: string): Promise<KeyPairSigner> {
       await readFile(path, "utf8"),
     ) as typeof credentials;
   } catch {
-    throw new Error(`Could not read valid testnet credentials for ${account}`);
+    throw new Error(`Could not read valid ${NETWORK} credentials for ${account}`);
   }
   if ((credentials.account_id && credentials.account_id !== account) || !credentials.private_key) {
-    throw new Error(`Invalid testnet credentials for ${account}`);
+    throw new Error(`Invalid ${NETWORK} credentials for ${account}`);
   }
   return KeyPairSigner.fromSecretKey(
     credentials.private_key as `ed25519:${string}`,
@@ -389,7 +398,7 @@ async function sendTransaction(
         await save(out, run);
         continue;
       }
-      if (!/failed across testnet RPC endpoints/i.test(errorText(error)))
+      if (!/failed across \w+ RPC endpoints/i.test(errorText(error)))
         throw error;
       record.broadcast_uncertain = errorText(error);
       await save(out, run);

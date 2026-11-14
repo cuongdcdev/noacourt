@@ -1,5 +1,13 @@
 # Noa Court E2E results
 
+## Mainnet
+
+First NEAR mainnet markets through the public MCP (`https://court.noamarket.xyz/mcp`), explorer: NearBlocks. Full log: [run-mainnet-20261114T185017Z.md](e2e/mcp-agent/run-mainnet-20261114T185017Z.md).
+
+| Date (UTC) | Scenario | Market ID | Spec hash | Create tx | Link tx | Trigger tx | Resolve | Finalize tx | Claim tx | Verdict / outcome | TEE | Independent check | Result | Notes |
+| --- | --- | ---: | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 2026-11-14T18:51:32Z | MCP-agent mainnet A1 (NEAR/USDT >= 3.10 at 19:28Z) | [26](https://noamarket.xyz/markets/26) | sha256:f7286d67bf0 | [4HTi4ygMD](https://nearblocks.io/txns/4HTi4ygMDWoBCMtGST9cB8CqYj1RJfiDYHak1R8KQQ7n) | [G6JtTSAmn](https://nearblocks.io/txns/G6JtTSAmnkLbotHfoYHf31QKp9cck9sxJjbDsSXcQC13) | [8A3AQWuJE](https://nearblocks.io/txns/8A3AQWuJEaNmH8fsXWjyJBw1kRLCbZK2pkqF4bTfSZDu) | proposed in trigger tx (Noa `resolution_proposed`, 19:29:34Z) | [AG7B9991k](https://nearblocks.io/txns/AG7B9991kRwMDLJ45fhnScohDaASzniuB7KwNVhtHxGd) | [9SkEudErv](https://nearblocks.io/txns/9SkEudErvURUWcEiZepYkAti9U9xwCs8usBTJyaRAopA) | No, value 3.092, attempt 1, OutLayer request 3646 | true (submitted_by outlayer) | Binance 1m 19:28Z close 3.092 -> No | PASS | Stake 100 NPOINT; tester1 Yes 50 ([9JDirAV77](https://nearblocks.io/txns/9JDirAV774giJBFQZSpAttfmjZQWNyvqXFk8fxa74P8Y)), tester3 No 50 ([MLtb4H5Vb](https://nearblocks.io/txns/MLtb4H5VbkHJTm161Jqs5gQitgf9EHfHcYcGSy6jhj1)); register [747HJbU87](https://nearblocks.io/txns/747HJbU87o2y3awCvZga3U1N6EphEWdzXEjq4jSG3kUG); metadata published and verified |
+
 Each transaction hash links to the NEAR testnet explorer. A blank cell means the evidence was not discoverable. `fallback` in Notes means the harness intervened after the keeper was more than three minutes late.
 
 | Date (UTC) | Scenario | Market ID | Spec hash | Create tx | Link tx | Trigger tx(s) | Resolve tx | Finalize tx | Claim txs | Verdict / outcome | TEE | Independent check | Result | Notes |
