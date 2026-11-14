@@ -1,6 +1,6 @@
 # Noa Court MCP
 
-Standalone Node 22/pnpm server for the ten Noa Court MCP tools, wallet sign links, and the permissionless keeper. It never asks for or stores creator keys. The only server key is the keeper credential configured by `KEEPER_CREDENTIALS`.
+Standalone Node 22/pnpm server for the eleven Noa Court MCP tools, wallet sign links, and the permissionless keeper. It never asks for or stores creator keys. The only server key is the keeper credential configured by `KEEPER_CREDENTIALS`.
 
 ## Run
 

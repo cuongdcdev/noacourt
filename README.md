@@ -6,6 +6,25 @@
 
 Noa Court lets a market creator lock a resolution rule into a canonical JSON spec before trading, preflight it against real sources, and receive a source-backed outcome from a resolver running through OutLayer on NEAR testnet. The Court contract stores the spec and receipt, checks the verdict, and forwards Noa market outcomes; a generic request and callback interface serves other contracts. The MCP server helps agents draft, sample, lint, simulate, and prepare a wallet sign link.
 
+## What's new for the final submission
+
+Resolution runs in an [OutLayer](https://outlayer.ai) TEE (hackathon sponsor): Court calls OutLayer on chain, accepts a verdict only from the OutLayer callback, and stores it with `tee: true` (see [Live evidence](#live-evidence)). Added on 2026-11-14:
+
+- **Metadata publication to Noa.** `market_create_link` takes an optional `description`. The sign page freezes it with the rendered rules, renderer version, spec hash and a metadata digest. The creator signs a NEP-413 Noa login before the create transactions, the browser publishes description and rules to Noa, and the server reads them back to verify (rate-limited). A retry panel remains after reload. Publication is controlled by `NOA_API_URL`, `NOA_AUTH_RECIPIENT` and `NOA_MARKET_URL_BASE`; when they are unset it is disabled and the page says so. The public testnet deployment runs this way because no public Noa testnet API exists. Commits `e1e344b`, `50d71ae`; [E2E on markets 87 and 88](e2e/publish/RESULTS-20261114.md); [task status](openspec/changes/publish-noa-market-metadata/tasks.md).
+- **NEAR Connect wallets.** The sign page uses `@hot-labs/near-connect` 0.11.5 (vendored) with Intear, Meteor (extension, web and app) and HOT Wallet. HOT is mainnet-only because HOT has no testnet support. Commits `2465efb`, `fc71fac`.
+- **Redesigned sign page.** Noa market-detail layout: outcomes with win conditions, a Resolution & rules card with a creator / resolver (TEE) / sources footer, a sticky sign panel, and a "How resolution works" section that credits OutLayer and states the testnet `tee: false` fallback caveat. Light and dark themes, labeled transaction links (Register spec, Create market, Link to Court). Commits `66f6226`, `08f396c` and later.
+- **Custom token and stake.** The new `list_whitelisted_tokens` tool returns active Noa-whitelisted tokens with symbol, decimals, minimum trade and minimum stake per outcome count. `market_create_link` accepts any of them as `token_id` and a custom `stake` (the creator's liquidity), and rejects stakes below the minimum. Live testnet minimum stake for 2 outcomes: POINT 1, wNEAR 1, mPOO 1,000,000. Commit `be15db1`.
+
+| Pending request | Created market |
+| --- | --- |
+| ![Pending sign page, light, 1280 px](docs/img/sign-pending.png) | ![Completed sign page for market 89, light, 1280 px](docs/img/sign-created.png) |
+
+![Sign page on a 390 px screen, dark theme](docs/img/sign-mobile-dark.png)
+
+The pending request is a sample created only for this screenshot; nobody signed it. The created request is testnet market 89, signed by the owner with publication disabled.
+
+**Limits.** Not tested: a real-wallet browser run of the publication path (only a Node stub wallet ran it, on markets 87 and 88), the mobile wallet matrix, metadata backfill of markets created earlier, and mainnet activation. Mainnet publication needs Noa's production `CORS_ORIGINS` to include `https://noacourtmcp.junstudio.xyz`. Noa clears `image_url` and `embed_url` on the first publish when they are omitted (`apps/indexer/src/api/api.ts:991-1009` in the closed-source noamarket monorepo, so not checkable from this repository).
+
 ## Try it
 
 1. Open [service health](https://noacourtmcp.junstudio.xyz/healthz) → see the MCP service status.
