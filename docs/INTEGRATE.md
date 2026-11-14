@@ -4,7 +4,7 @@ Noa Court resolves a canonical ResolutionSpec through `ai-resolver.noamarket.tes
 
 ## Generic contract integration
 
-Clone the [Noa Court repository](https://github.com/cuongdcdev/noa-court) when published, then install `near-cli-rs` 0.30 and Node.js with the `apps/mcp` dependencies (`cd apps/mcp && pnpm install`). Prepare a complete valid ResolutionSpec in a local JSON file, updating its observation time and sources. The following uses the saved [price example](../resolver/examples/a1_near_threshold.spec.json) as a starting point. Its fixed date must be moved into the future before a new request. `spec_json` is one JSON **string**, not a nested object. The `canonicalize` package used here is the same dependency as the MCP server; `rules_render` can also supply canonical `spec_json` and `spec_hash`.
+Clone the [Noa Court repository](https://github.com/cuongdcdev/noacourt) when published, then install `near-cli-rs` 0.30 and Node.js with the `apps/mcp` dependencies (`cd apps/mcp && pnpm install`). Prepare a complete valid ResolutionSpec in a local JSON file, updating its observation time and sources. The following uses the saved [price example](../resolver/examples/a1_near_threshold.spec.json) as a starting point. Its fixed date must be moved into the future before a new request. `spec_json` is one JSON **string**, not a nested object. The `canonicalize` package used here is the same dependency as the MCP server; `rules_render` can also supply canonical `spec_json` and `spec_hash`.
 
 ```sh
 export SIGNER=your-account.testnet

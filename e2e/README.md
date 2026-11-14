@@ -1,4 +1,4 @@
-# [Noa Court](https://github.com/cuongdcdev/noa-court) testnet E2E harness
+# [Noa Court](https://github.com/cuongdcdev/noacourt) testnet E2E harness
 
 Node 22 and pnpm are required. The runner creates real testnet markets only when run without `--dry-run`.
 
