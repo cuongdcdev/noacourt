@@ -4,7 +4,7 @@
 
 ## Live on NEAR mainnet
 
-Live since 2026-11-14. Court `ai-resolver.noamarket.near` resolves markets on [Noa](https://noamarket.xyz) (`v3.noamarket.near`).
+Live since 2026-11-14. Court `ai-resolver.noamarket.near` resolves markets on [Noa](https://noamarket.xyz) (`v3.noamarket.near`). First market resolved and finalized on mainnet: [#26](#live-markets-on-mainnet).
 
 - **MCP endpoint:** `https://court.noamarket.xyz/mcp` (stateless Streamable HTTP, no auth, rate limited). [Health](https://court.noamarket.xyz/healthz). Sign pages live at `https://court.noamarket.xyz/sign/<id>`.
 - **Docs:** [README](https://court.noamarket.xyz/docs/README.md), [MCP](https://court.noamarket.xyz/docs/MCP.md), [SPEC](https://court.noamarket.xyz/docs/SPEC.md), [ARCHITECTURE](https://court.noamarket.xyz/docs/ARCHITECTURE.md), [INTEGRATE](https://court.noamarket.xyz/docs/INTEGRATE.md), [NEAR_TOKENS](https://court.noamarket.xyz/docs/NEAR_TOKENS.md), [SKILL](https://court.noamarket.xyz/docs/SKILL.md).
@@ -53,9 +53,25 @@ Both screenshots come from the testnet instance. The pending request is a sample
 - **Sign page in Noa's layout.** Outcomes with win conditions, a Resolution & rules card with a creator / resolver (TEE) / sources footer, a sticky sign panel, and a "How resolution works" section that credits OutLayer. Light and dark themes, labeled transaction links (Register spec, Create market, Link to Court).
 - **Custom token and stake.** `list_whitelisted_tokens` returns active Noa-whitelisted tokens with symbol, decimals, minimum trade and minimum stake per outcome count. `market_create_link` accepts any of them as `token_id` and a custom `stake` (the creator's liquidity), and rejects stakes below the minimum.
 
+## Live markets on mainnet
+
+Markets created through the MCP and resolved by Court on NEAR mainnet:
+
+| Market | Question | Outcome | Evidence |
+| --- | --- | --- | --- |
+| [#26](https://noamarket.xyz/markets/26-will-the-near-usdt-1-minute-close-at-2026-11-14t19-28-00z-be) | Will the NEAR/USDT 1-minute close at 2026-11-14T19:28:00Z be at least 3.10? | **No** (Binance close 3.092 < 3.10; OKX 3.093) | Finalized. `tee: true`, `submitted_by: "outlayer"`, attempt 1, OutLayer request 3646 |
+
+Market #26 step by step (all on [NearBlocks](https://nearblocks.io/address/ai-resolver.noamarket.near)):
+
+1. An agent drafted, sampled and simulated the spec through the MCP, then called `market_create_link` with a plain-English description. The creator signed the served plan: [register spec](https://nearblocks.io/txns/747HJbU87o2y3awCvZga3U1N6EphEWdzXEjq4jSG3kUG), [create market](https://nearblocks.io/txns/4HTi4ygMDWoBCMtGST9cB8CqYj1RJfiDYHak1R8KQQ7n), [link to Court](https://nearblocks.io/txns/G6JtTSAmnkLbotHfoYHf31QKp9cck9sxJjbDsSXcQC13). Stake: 100 NPOINT.
+2. The reviewed description and rules were published to Noa with the creator's NEP-413 login and verified by read-back.
+3. Two traders bet 50 NPOINT each: [Yes](https://nearblocks.io/txns/9JDirAV774giJBFQZSpAttfmjZQWNyvqXFk8fxa74P8Y), [No](https://nearblocks.io/txns/MLtb4H5VbkHJTm161Jqs5gQitgf9EHfHcYcGSy6jhj1).
+4. At 19:28 UTC + 70 s the keeper [triggered](https://nearblocks.io/txns/8A3AQWuJEaNmH8fsXWjyJBw1kRLCbZK2pkqF4bTfSZDu) Court. OutLayer ran the pinned resolver `39e5a6ce…` in a TEE, which fetched Binance (3.092, used) and OKX (3.093, fallback). Court accepted the verdict `No` with `tee: true` at 19:29:33 UTC and proposed it to Noa.
+5. After Noa's 60-minute dispute window the keeper [finalized](https://nearblocks.io/txns/AG7B9991kRwMDLJ45fhnScohDaASzniuB7KwNVhtHxGd) the market.
+
 ## Status and limits
 
-- **No mainnet market has been created or resolved through Court yet.** The first mainnet markets are pending. All resolution evidence below is from testnet.
+- Mainnet has one finalized market so far (#26 above). The broader scenario evidence (price, RSS text judge, void, generic requests) is from testnet and listed below.
 - A real-wallet browser run of the publication path is not yet recorded (only a Node stub wallet ran it, on testnet markets 87 and 88).
 - The mobile wallet matrix is untested, as is metadata backfill of markets created earlier.
 - Noa clears `image_url` and `embed_url` on the first publish when they are omitted (`apps/indexer/src/api/api.ts:991-1009` in the closed-source noamarket monorepo, so not checkable from this repository).
