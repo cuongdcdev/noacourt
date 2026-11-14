@@ -144,6 +144,15 @@ export class SignStore {
     }
     return this.fromRow(row);
   }
+  /** Newest locally stored spec_json for a full "sha256:<hex>" hash (fallback for /spec/:hash). */
+  specJsonByHash(specHash: string): string | null {
+    const row = this.db
+      .prepare(
+        "SELECT spec_json FROM sign_requests WHERE spec_hash = ? ORDER BY created_at DESC LIMIT 1",
+      )
+      .get(specHash) as { spec_json: string } | undefined;
+    return row?.spec_json ?? null;
+  }
   /** Freeze a snapshot once (never overwrites an existing one). */
   freezeSnapshot(id: string, snapshot: MetadataSnapshot): void {
     this.db

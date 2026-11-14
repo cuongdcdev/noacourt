@@ -4,6 +4,7 @@ import { CourtClient, linkRejectionReason } from "../court/client.js";
 import { NearRpc } from "../near/rpc.js";
 import type { KeeperSigner } from "../near/signer.js";
 import { renderRules } from "../spec/render.js";
+import { NOA_RULES_VERSION, renderNoaRules, validateNoaRules } from "../spec/noaRules.js";
 import {
   buildCreateMarketTxs,
   effectiveAttempts,
@@ -38,10 +39,16 @@ export async function createSignRequest(
   store: SignStore,
   rawInput: Omit<BuildInput, "court_contract" | "noa_contract"> & {
     description?: string;
+    noa_rules?: string;
   },
   requestedAtMs = Date.now(),
 ) {
-  const { description, ...input } = rawInput;
+  const { description, noa_rules, ...input } = rawInput;
+  const noaRulesProvided = noa_rules !== undefined && noa_rules.trim() !== "";
+  const noaCheck = noaRulesProvided
+    ? validateNoaRules(noa_rules, input.spec_json)
+    : null;
+  const noaBody = noaCheck ? noaCheck.text : renderNoaRules(input.spec_json);
   const publicationConfig = resolvePublicationConfig(config);
   if (publicationConfig.status === "invalid")
     throw new Error(
@@ -77,7 +84,7 @@ export async function createSignRequest(
     input.resolution_window_minutes ?? requiredWindow,
     requiredWindow,
   );
-  const warnings: string[] = [];
+  const warnings: string[] = [...(noaCheck?.warnings ?? [])];
   if (
     input.resolution_window_minutes !== undefined &&
     input.resolution_window_minutes < requiredWindow
@@ -118,6 +125,7 @@ export async function createSignRequest(
     token_id: input.token_id || config.marketToken,
     outcomes: input.outcomes,
     description,
+    noa: { rules_body: noaBody, public_base_url: config.publicBaseUrl },
   });
   const request = store.create(
     params,
@@ -139,6 +147,9 @@ export async function createSignRequest(
     spec_hash: request.spec_hash,
     metadata_digest: snapshot.metadata_digest,
     description: snapshot.description,
+    noa_rules: snapshot.rules,
+    noa_rules_generated: !noaRulesProvided,
+    renderer_version: snapshot.renderer_version,
     description_is_fallback:
       description === undefined || description.trim() === "",
     publication: publicationConfig.status,
@@ -180,7 +191,10 @@ export function ensureSnapshot(
 }
 
 export function publicRequest(config: Config, request: SignRequest) {
-  const rendered = request.snapshot
+  // New links freeze human-readable Noa rules; the binding canonical rules are re-derived from the spec.
+  // Legacy snapshots hold the canonical rules themselves and keep their bytes.
+  const noaFormat = request.snapshot?.renderer_version === NOA_RULES_VERSION;
+  const rendered = request.snapshot && !noaFormat
     ? { rules_markdown: request.snapshot.rules }
     : renderRules(request.spec_json);
   const spec = JSON.parse(request.spec_json) as Record<string, any>;
@@ -203,6 +217,7 @@ export function publicRequest(config: Config, request: SignRequest) {
     },
     spec_hash: request.spec_hash,
     rules_markdown: rendered.rules_markdown,
+    noa_rules: noaFormat ? request.snapshot!.rules : null,
     description: request.snapshot?.description ?? null,
     renderer_version: request.snapshot?.renderer_version ?? null,
     metadata_digest: request.snapshot?.metadata_digest ?? null,

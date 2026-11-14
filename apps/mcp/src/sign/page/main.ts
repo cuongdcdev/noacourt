@@ -25,6 +25,7 @@ type PublicRequest = {
   sign_before?: string;
   requested_close_at?: string;
   rules_markdown: string;
+  noa_rules?: string | null;
   description?: string | null;
   metadata_digest?: string | null;
   spec_hash?: string;
@@ -541,13 +542,27 @@ async function main() {
   // Display only: when the frozen description equals the rules, show the text once.
   const rawRules = document.getElementById("rules-raw")!;
   rawRules.textContent = request.rules_markdown;
-  const sameText = request.description === request.rules_markdown;
-  const desc = sameText
-    ? null
-    : (request.description ?? "(no reviewed description: legacy request)");
-  setDoc("description", desc);
-  document.getElementById("rules-title")!.hidden = !desc;
-  setDoc("rules", request.rules_markdown);
+  const noaRules = request.noa_rules?.trim() ? request.noa_rules : null;
+  const canon = document.getElementById("canon") as HTMLDetailsElement;
+  if (noaRules) {
+    // New format: the plain text traders see on Noa first; the binding canonical rules sit behind a disclosure.
+    const sameText = request.description === noaRules;
+    setDoc("description", sameText ? null : (request.description ?? null));
+    document.getElementById("noa-rules")!.textContent = noaRules;
+    (document.getElementById("noa-wrap") as HTMLElement).hidden = false;
+    canon.classList.remove("plain");
+    document.getElementById("rules-title")!.hidden = true;
+    setDoc("rules", request.rules_markdown);
+  } else {
+    const sameText = request.description === request.rules_markdown;
+    const desc = sameText
+      ? null
+      : (request.description ?? "(no reviewed description: legacy request)");
+    setDoc("description", desc);
+    document.getElementById("rules-title")!.hidden = !desc;
+    canon.open = true;
+    setDoc("rules", request.rules_markdown);
+  }
   const qr = document.getElementById("qr") as HTMLImageElement | null;
   if (qr && request.status === "pending") {
     try {

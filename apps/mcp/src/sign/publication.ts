@@ -1,6 +1,7 @@
 import type { Config } from "../config.js";
 import { jcs, sha256 } from "../spec/canonical.js";
 import { RENDERER_VERSION, renderRules } from "../spec/render.js";
+import { NOA_RULES_VERSION, composeNoaRules } from "../spec/noaRules.js";
 
 /** Mainnet-only built-in defaults. Testnet has no hosted Noa API, so no default. */
 export const MAINNET_NOA_DEFAULTS = {
@@ -172,13 +173,24 @@ export function buildSnapshot(input: {
   token_id: string;
   outcomes: string[];
   description?: string;
+  /**
+   * Human-readable Noa rules (agent-written or generated body, no footer) plus the public base URL
+   * for the server footer. Omitted for legacy requests, which keep the machine rules-v1 text.
+   */
+  noa?: { rules_body: string; public_base_url: string };
 }): MetadataSnapshot {
-  const rules = renderRules(input.spec_json).rules_markdown;
+  const rules = input.noa
+    ? composeNoaRules(
+        input.noa.rules_body,
+        input.spec_hash,
+        input.noa.public_base_url,
+      )
+    : renderRules(input.spec_json).rules_markdown;
   const description = normalizeDescription(input.description, rules);
   return {
     description,
     rules,
-    renderer_version: RENDERER_VERSION,
+    renderer_version: input.noa ? NOA_RULES_VERSION : RENDERER_VERSION,
     spec_hash: input.spec_hash,
     metadata_digest: metadataDigest({
       title: input.title,

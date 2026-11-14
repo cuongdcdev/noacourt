@@ -43,7 +43,7 @@ const NETWORK_DEFAULTS = {
     creds: "/root/.near-credentials/testnet/court-ops.noamarket.testnet.json",
   },
   mainnet: {
-    rpcs: "https://rpc.mainnet.fastnear.com,https://rpc.mainnet.near.org,https://near.lava.build",
+    rpcs: "https://rpc.mainnet.fastnear.com,https://free.rpc.fastnear.com,https://rpc.intea.rs,https://rpc.mainnet.near.org",
     court: "ai-resolver.noamarket.near",
     noa: "v3.noamarket.near",
     token: "npoint.noamarket.near",

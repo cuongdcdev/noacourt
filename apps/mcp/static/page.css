@@ -227,3 +227,14 @@ button.copy:hover{background:var(--chip)}
 .txs>div{display:flex;justify-content:space-between;gap:12px;align-items:baseline;font-size:.875rem}
 .txs dt{color:var(--muted,inherit)}
 .txs dd{margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.8125rem}
+
+/* Noa rules text (plain, as traders see it on Noa) and canonical-rules disclosure */
+.noa-rules{margin:0 0 4px;padding:14px 16px;background:var(--chip);border-radius:12px;white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;font-size:.9375rem;line-height:1.6}
+.noa-label{margin:0 0 8px}
+.disc{margin-top:16px;border-top:1px solid var(--line);padding-top:4px}
+.disc>summary{cursor:pointer;color:var(--ink);font-size:.9375rem;font-weight:600;padding:10px 0}
+.disc>summary:hover{color:var(--link)}
+.disc .doc{padding-top:8px}
+.srcnote{margin:0;font-size:.8125rem;color:var(--muted)}
+.srclist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}
+.disc.plain{margin-top:0;border-top:0;padding-top:0}.disc.plain>summary{display:none}

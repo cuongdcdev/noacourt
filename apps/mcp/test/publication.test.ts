@@ -590,9 +590,10 @@ describe("publication server flow", () => {
     ).then((c) => ({ id: c.url.split("/").at(-1)!, created: c }));
     const request = store.get(id)!;
     expect(request.snapshot!.description).toBe(request.snapshot!.rules);
-    expect(request.snapshot!.rules).toBe(
-      renderRules(request.spec_json).rules_markdown,
-    );
+    // New links publish the human-readable Noa rules (generated here) + footer; the canonical rules stay the spec-derived text.
+    expect(request.snapshot!.rules).toContain("Resolves Yes if");
+    expect(request.snapshot!.renderer_version).toBe("noa-rules-v1");
+    expect(created.noa_rules_generated).toBe(true);
     expect(created.description_is_fallback).toBe(true);
     expect(request.spec_hash).toBe(rendered.spec_hash);
     expect(request.spec_json).toBe(rendered.spec_json);
@@ -606,7 +607,7 @@ describe("publication server flow", () => {
     const first = store.get(id)!;
     expect(first.snapshot).toMatchObject({
       description: "Plain explanation.",
-      renderer_version: "rules-v1",
+      renderer_version: "noa-rules-v1",
     });
     expect(first.snapshot!.metadata_digest).toBe(created.metadata_digest);
     const reopened = new SignStore(config);
@@ -614,6 +615,8 @@ describe("publication server flow", () => {
     expect(second.snapshot).toEqual(first.snapshot);
     // Even if the rules text in the row differs from what a new renderer would produce, API serves frozen bytes.
     const db = new DatabaseSync(join(dir, "mcp.sqlite"));
+    // (this row is a legacy rules-v1 request: its frozen rules are the canonical text)
+    db.prepare("UPDATE sign_requests SET renderer_version = 'rules-v1' WHERE id = ?").run(id);
     db.prepare("UPDATE sign_requests SET rules_text = ? WHERE id = ?").run(
       "FROZEN RULES\n",
       id,
@@ -761,9 +764,10 @@ describe("publication server flow", () => {
         title: "NEAR market",
         outcomes: ["Yes", "No"],
         description: "Explained.",
-        rules: api.rules_markdown,
+        rules: api.noa_rules,
       },
     });
+    expect(api.noa_rules).toContain("Full rules: ");
     expect(api.publication.market_url).toBeNull();
   });
   it("verify: missing keeps state, mismatch -> conflict, match -> published, forged ack ignored", async () => {

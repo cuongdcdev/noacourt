@@ -14,7 +14,7 @@ import { NearRpc } from "./near/rpc.js";
 import { CourtClient, outlayerRequestIdFromTx } from "./court/client.js";
 import { WasmRunner } from "./resolver/wasm.js";
 import { RateLimiter, SpendCounter } from "./ratelimit.js";
-import { jcs, parseSpec } from "./spec/canonical.js";
+import { jcs, parseSpec, sha256 } from "./spec/canonical.js";
 import { prelint } from "./spec/prelint.js";
 import { DEFAULT_RETRY_POLICY } from "./spec/defaults.js";
 import { renderRules } from "./spec/render.js";
@@ -38,6 +38,7 @@ import {
   verifyPublication,
 } from "./sign/publication.js";
 import { signPage } from "./sign/page/html.js";
+import { specNotFoundPage, specPage } from "./sign/page/specPage.js";
 import { KeeperSigner } from "./near/signer.js";
 import { KeeperLoop } from "./keeper/loop.js";
 import { ActionHistory } from "./keeper/history.js";
@@ -309,6 +310,91 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
         if (error && !res.headersSent) res.status(404).end();
       });
     });
+  const specLimit = new RateLimiter(config.rateLimitPerMin);
+  app.get("/spec/:hash", async (req, res) => {
+    res.setHeader("Cache-Control", "no-store, max-age=0");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    const limit = specLimit.check(ipOf(req));
+    if (!limit.allowed) {
+      res.setHeader("Retry-After", String(limit.retryAfterSeconds));
+      res.status(429).type("text/plain").send("rate limited");
+      return;
+    }
+    const match = /^(?:sha256:)?([0-9a-fA-F]{64})$/.exec(req.params.hash);
+    if (!match) {
+      res
+        .status(400)
+        .type("html")
+        .send(
+          specNotFoundPage(
+            config.nearNetwork,
+            "Invalid spec hash: expected 64 hexadecimal characters (optionally prefixed sha256:).",
+          ),
+        );
+      return;
+    }
+    const hex = match[1].toLowerCase();
+    const full = `sha256:${hex}`;
+    let specJson: string | null = null;
+    let source: "chain" | "local" = "chain";
+    let registeredBy: string | null = null;
+    let chainFailed = false;
+    try {
+      const entry = (await Promise.race([
+        court.spec(full),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("chain read timed out")), 10_000).unref(),
+        ),
+      ])) as Record<string, any> | null;
+      if (entry && typeof entry.spec_json === "string") {
+        if (sha256(entry.spec_json) !== full) chainFailed = true;
+        else {
+          specJson = entry.spec_json;
+          registeredBy = entry.registered_by ?? null;
+        }
+      }
+    } catch {
+      chainFailed = true;
+    }
+    if (chainFailed) {
+      const local = store.specJsonByHash(full);
+      if (local && sha256(local) === full) {
+        specJson = local;
+        source = "local";
+      }
+    }
+    if (!specJson) {
+      res
+        .status(chainFailed ? 502 : 404)
+        .type("html")
+        .send(
+          specNotFoundPage(
+            config.nearNetwork,
+            chainFailed
+              ? "Could not read the Court contract and this server has no stored copy. Try again shortly."
+              : undefined,
+          ),
+        );
+      return;
+    }
+    try {
+      res.type("html").send(
+        specPage({
+          hex,
+          spec_json: specJson,
+          source,
+          network: config.nearNetwork,
+          courtContract: config.courtContract,
+          registeredBy,
+        }),
+      );
+    } catch {
+      res
+        .status(500)
+        .type("html")
+        .send(specNotFoundPage(config.nearNetwork, "This spec could not be rendered."));
+    }
+  });
   app.get("/sign/:id", (req, res) => {
     const request = store.get(req.params.id);
     res
@@ -909,7 +995,7 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
     );
     register(
       "market_create_link",
-      "Validate a market and spec, then store a wallet sign URL with a frozen reviewed description and rules (optional description input). This tool sends no transaction and never requests private keys; the user signs later in a wallet.",
+      "Validate a market and spec, then store a wallet sign URL with a frozen reviewed description and the human-readable rules published to Noa (noa_rules: write it in the exact format from court_guide; omitted = the server generates it from the spec). This tool sends no transaction and never requests private keys; the user signs later in a wallet.",
       {
         title: z
           .string()
@@ -966,7 +1052,14 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
           .max(4000)
           .optional()
           .describe(
-            "Optional plain-text explanation of the final spec for traders (published to Noa as the market description, with the spec-derived rules). It never changes the spec or its hash; omitted = the rendered rules are used. The creator reviews both on the sign page.",
+            "Optional context for traders: one or two plain sentences about what the market is about. Do NOT repeat the resolution rules (they are published separately as noa_rules). Published to Noa as the market description; it never changes the spec or its hash. Omitted = the Noa rules text is used.",
+          ),
+        noa_rules: z
+          .string()
+          .max(2000)
+          .optional()
+          .describe(
+            "Human-readable resolution rules shown to traders on Noa. REQUIRED by the court_guide workflow (optional here only for compatibility: omitted = generated deterministically from the spec). Plain text, 40-1200 characters, no markdown, no JSON, no backticks; name every outcome label; state the exact observation time in UTC, the threshold, the sources in plain words, and the void/refund rule. Format: 'Resolves <Yes> if <condition at time>; otherwise <No>.' then a blank line, then 'Source: ...' and the retry/void sentence. Do not write the footer; the server appends 'Resolved by Noa Court in an OutLayer TEE. Spec sha256:<hash>' and the link to the full rules.",
           ),
       },
       async (args) =>
@@ -1073,6 +1166,7 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
               court_max_attempts: configuredAttempts ?? undefined,
               creator: args.creator,
               description: args.description,
+              noa_rules: args.noa_rules,
             },
             requestedAtMs,
           );
