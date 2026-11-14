@@ -93,7 +93,7 @@ export const WALLET_MANIFEST = {
             icon: "https://app.hot-labs.org/images/hot/hot-icon.png",
             description: "Secure Multichain wallet. Manage assets, refuel gas, and mine $HOT on any device with HOT Wallet",
             website: "https://hot-labs.org/wallet",
-            version: "1.0.2",
+            version: "1.0.3",
             executor: "/public/wallets/hotwallet.js",
             type: "sandbox",
 
@@ -110,9 +110,8 @@ export const WALLET_MANIFEST = {
                 signInWithoutAddKey: true,
                 signAndSendTransaction: true,
                 signAndSendTransactions: true,
-                // Not in Noa's copy: near-connect hides wallets without testnet:true on testnet.
-                testnet: true,
-                mainnet: true
+                // Same as Noa's copy: no testnet flag, so near-connect hides HOT on testnet
+                // (HOT Wallet has no testnet support). It appears on mainnet.
             },
 
             permissions: {
