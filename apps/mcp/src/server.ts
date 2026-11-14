@@ -21,6 +21,8 @@ import { renderRules } from "./spec/render.js";
 import { rawSample } from "./source.js";
 import { SignStore } from "./sign/store.js";
 import { decimalToUnits } from "./sign/txBuilder.js";
+import { createTokenReader } from "./noa/tokens.js";
+import { ceilAtomicToHuman } from "./noa/stake.js";
 import { SignPlanConflictError } from "./sign/timing.js";
 import {
   completeSignRequest,
@@ -121,6 +123,7 @@ const discovery = {
     "spec_lint",
     "spec_simulate",
     "rules_render",
+    "list_whitelisted_tokens (pick token and stake)",
     "market_create_link",
     "creator signs with wallet",
     "market_status",
@@ -169,6 +172,7 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
   });
   const rpc = deps.rpc || new NearRpc(config);
   const court = deps.court || new CourtClient(config, rpc);
+  const tokenReader = createTokenReader(config, rpc);
   const wasm = deps.wasm || new WasmRunner(config);
   const spend = deps.spend || new SpendCounter(config);
   const store = deps.store || new SignStore(config);
@@ -860,6 +864,31 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
         guard(() => renderRules(spec, simulated_wasm_sha256))(),
     );
     register(
+      "list_whitelisted_tokens",
+      "List the tokens a creator can use for market_create_link (token_id) with decimals, symbol, minimum trade amount and the minimum stake (the creator's liquidity) for a given outcome count. Read-only.",
+      {
+        outcome_count: z
+          .number()
+          .int()
+          .min(2)
+          .max(10)
+          .optional()
+          .describe("Number of market outcomes (2-10, default 2); the minimum stake depends on it."),
+      },
+      async ({ outcome_count }) =>
+        guard(async () => {
+          const count = outcome_count ?? 2;
+          const tokens = await tokenReader.describe(count);
+          return {
+            network: config.nearNetwork,
+            noa_contract: config.noaContract,
+            outcome_count: count,
+            tokens,
+            note: "The stake you pass to market_create_link is the creator's liquidity: it is deposited into the market and handled per Noa rules, not spent as a fee. Noa also charges a separate market creation fee in NEAR (plus storage deposits), which the creator pays in the wallet and is not refunded. Pick any is_active token below and any stake >= min_stake.",
+          };
+        })(),
+    );
+    register(
       "market_create_link",
       "Validate a market and spec, then store a wallet sign URL with a frozen reviewed description and rules (optional description input). This tool sends no transaction and never requests private keys; the user signs later in a wallet.",
       {
@@ -875,7 +904,7 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
         stake: z
           .string()
           .describe(
-            "Human token amount, usually NPOINT (18 decimals); no yocto conversion needed.",
+            "Custom liquidity stake as a human amount in the chosen token's units (no yocto conversion), at least that token's min_stake for this outcome count; see list_whitelisted_tokens.",
           ),
         duration_minutes: z
           .number()
@@ -911,7 +940,7 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
           .string()
           .optional()
           .describe(
-            "Noa-whitelisted token contract; defaults to point.noamarket.testnet (NPOINT).",
+            "Any active Noa-whitelisted token contract; see list_whitelisted_tokens. Defaults to the configured market token (point.noamarket.testnet, NPOINT).",
           ),
         description: z
           .string()
@@ -957,10 +986,11 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
             throw new Error("duration must be 5 minutes to 365 days");
           const tokenId = args.token_id ?? config.marketToken;
           let tokenDecimals = 18;
+          let whitelistedToken: Awaited<
+            ReturnType<typeof tokenReader.whitelist>
+          >[number] | undefined;
           try {
-            const tokens = await rpc.view<
-              { token_id: string; decimals: number; is_active: boolean }[]
-            >(config.noaContract, "get_whitelisted_tokens", {});
+            const tokens = await tokenReader.whitelist();
             const token = tokens.find(
               (item) => item.token_id === tokenId && item.is_active,
             );
@@ -969,6 +999,7 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
                 `token_id ${tokenId} is not an active Noa-whitelisted token`,
               );
             tokenDecimals = token.decimals;
+            whitelistedToken = token;
           } catch (error) {
             if (
               error instanceof Error &&
@@ -987,6 +1018,18 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
             throw new Error(
               `stake must be a positive token amount with at most ${tokenDecimals} decimals`,
             );
+          if (whitelistedToken) {
+            const minStake = await tokenReader
+              .minStakeAtomic(whitelistedToken, args.outcomes.length)
+              .catch(() => null);
+            if (
+              minStake !== null &&
+              BigInt(decimalToUnits(args.stake, tokenDecimals)) < minStake
+            )
+              throw new Error(
+                `stake ${args.stake} is below the minimum ${ceilAtomicToHuman(minStake, tokenDecimals)} ${tokenId} for ${args.outcomes.length} outcomes; call list_whitelisted_tokens (outcome_count=${args.outcomes.length}) for minimum stakes`,
+              );
+          }
           const hashWarnings =
             typeof originalSpec.rules_text_hash === "string" &&
             originalSpec.rules_text_hash !== rendered.rules_text_hash

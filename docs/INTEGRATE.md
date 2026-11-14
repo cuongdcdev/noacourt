@@ -172,7 +172,8 @@ In Claude.ai or ChatGPT custom connectors, enter the same MCP URL. Availability 
 | `spec_lint`          | Structural and authoritative resolver lint.                                 |
 | `spec_simulate`      | Live preflight: “if resolved now.” Text judging may consume NEAR AI budget. |
 | `rules_render`       | Human rules plus canonical `spec_json`, `spec_hash`, and rules hash.        |
-| `market_create_link` | Validated wallet sign URL and QR.                                           |
+| `list_whitelisted_tokens` | Noa-whitelisted tokens, decimals, symbol, and minimum stake per outcome count. |
+| `market_create_link` | Validated wallet sign URL and QR. The creator picks `token_id` and a custom `stake` (liquidity). |
 | `market_status`      | Noa and Court market state, pending resolution, and receipt.                |
 | `verdict_get`        | Stored receipt for `market_id` or `request_id`.                             |
 

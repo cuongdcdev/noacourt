@@ -179,6 +179,7 @@ All verdicts (full Verdict JSON + OutLayer request info) are stored on-chain for
 | `spec_lint` | lint |
 | `spec_simulate` | run the pinned `resolver.wasm` (same sha256 as Court config) with wasmtime, mode=simulate |
 | `rules_render` | rules text from spec (template) + `rules_text_hash`; returns canonical `spec_json` + `spec_hash` |
+| `list_whitelisted_tokens` | read-only: Noa whitelist (60 s cache) + NEP-148 symbol/name + min stake (BigInt port of `b >= min_b_shares_fp`, `src/noa/stake.ts`) |
 | `market_create_link` | params (title, outcomes, token, stake, duration, spec_json, creator?) → `https://noacourtmcp.junstudio.xyz/sign/<id>` + QR (PNG data URL) |
 | `market_status` | Noa market + Court state + latest verdict |
 | `verdict_get` | receipt for a market or generic request |

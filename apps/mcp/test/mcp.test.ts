@@ -308,7 +308,7 @@ describe("MCP HTTP", () => {
       method: "tools/list",
       params: {},
     });
-    expect(list.body.result.tools).toHaveLength(10);
+    expect(list.body.result.tools).toHaveLength(11);
     expect(list.body.result.tools.map((x: any) => x.name)).toEqual([
       "court_guide",
       "catalog_list",
@@ -317,6 +317,7 @@ describe("MCP HTTP", () => {
       "spec_lint",
       "spec_simulate",
       "rules_render",
+      "list_whitelisted_tokens",
       "market_create_link",
       "market_status",
       "verdict_get",
