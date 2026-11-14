@@ -7,6 +7,7 @@
 // Flow: GET /api/sign/:id -> NEP-413 login -> POST /v1/markets -> POST .../publication/verify.
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
+import { basename } from "node:path";
 import { keySigner } from "../../apps/mcp/src/sign/nep413.ts";
 import {
   recoverPublication,
@@ -44,7 +45,9 @@ console.log(
 );
 if (request.status !== "completed" || !view?.payload || !view.noa)
   throw new Error("request is not completed with publication enabled");
-const accountId = parsed.account_id ?? view.creator;
+// near-cli key files are named <account>.json and often lack account_id.
+const accountId =
+  parsed.account_id ?? basename(keyFile).replace(/\.json$/, "");
 if (accountId !== view.creator)
   throw new Error(
     `key file account ${accountId} is not the verified creator ${view.creator}`,
