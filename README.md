@@ -111,6 +111,7 @@ Markets created through the MCP and resolved by Court on NEAR mainnet:
 | Market | Question | Outcome | Evidence |
 | --- | --- | --- | --- |
 | [#26](https://noamarket.xyz/markets/26-will-the-near-usdt-1-minute-close-at-2026-11-14t19-28-00z-be) | Will the NEAR/USDT 1-minute close at 2026-11-14T19:28:00Z be at least 3.10? | **No** (Binance close 3.092 < 3.10; OKX 3.093) | Finalized. `tee: true`, `submitted_by: "outlayer"`, attempt 1, OutLayer request 3646 |
+| [#27](https://noamarket.xyz/markets/27-will-near-hackathon-get-more-than-2-000-projects) | Will NEAR Hackathon have more than 2,000 projects at 2026-11-15T00:05:00Z? | Pending: observed at 2026-11-15T00:05Z from `nearhackathon.com/api/projects` (`$.total`) | Linked to Court. [Register spec](https://nearblocks.io/txns/5r86PwC6KTqnzKpZcWS4dsHDDwMq1XhzmTSPcGapDeBk), [create market](https://nearblocks.io/txns/BefdfQupEhyhrFuarGZDvK9TdhaFCqbus55vHiSNJTWw), [link to Court](https://nearblocks.io/txns/F3wf7a72VR5NA8cDzGL6rg7TPjgQHPhPWsayopJEKH9T). Check `get_verdict({"id":"noa:27"})` after 00:06 UTC |
 
 Market #26 step by step (all on [NearBlocks](https://nearblocks.io/address/ai-resolver.noamarket.near)):
 
@@ -122,7 +123,7 @@ Market #26 step by step (all on [NearBlocks](https://nearblocks.io/address/ai-re
 
 ## Status and limits
 
-- Mainnet has one finalized market so far (#26 above). The broader scenario evidence (price, RSS text judge, void, generic requests) is from testnet and listed below.
+- Mainnet has one finalized market so far (#26 above); #27 resolves after the submission deadline (observation 2026-11-15T00:05Z). The broader scenario evidence (price, RSS text judge, void, generic requests) is from testnet and listed below.
 - A real-wallet browser run of the publication path is not yet recorded (only a Node stub wallet ran it, on testnet markets 87 and 88).
 - The mobile wallet matrix is untested, as is metadata backfill of markets created earlier.
 - Noa clears `image_url` and `embed_url` on the first publish when they are omitted (`apps/indexer/src/api/api.ts:991-1009` in the closed-source noamarket monorepo, so not checkable from this repository).
