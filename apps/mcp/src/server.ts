@@ -327,6 +327,10 @@ export function createApp(config: Config, deps: ServerDeps = {}) {
     const url = `${config.publicBaseUrl.replace(/\/$/, "")}/sign/${request.id}`;
     res.json({
       ...publicRequest(config, request),
+      resolver_sha256:
+        typeof (court as any).resolverStatus === "function"
+          ? court.resolverStatus().hash
+          : court.resolverHash(),
       qr_png_data_url: await QRCode.toDataURL(url, {
         type: "image/png",
         margin: 1,

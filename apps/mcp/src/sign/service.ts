@@ -210,6 +210,12 @@ export function publicRequest(config: Config, request: SignRequest) {
     spec_summary: {
       question: spec.question,
       observation: spec.observation,
+      decision_kind: spec.decide?.kind,
+      decide:
+        spec.decide?.kind === "threshold"
+          ? { kind: "threshold", op: spec.decide.op, value: spec.decide.value }
+          : { kind: spec.decide?.kind },
+      outcome_map: spec.outcome_map,
       outcomes: spec.outcomes,
       sources: (spec.sources || []).map((source: Record<string, any>) => ({
         id: source.id,

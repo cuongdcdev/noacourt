@@ -20,8 +20,10 @@ type PublicRequest = {
     outcomes: string[];
     stake: string;
     token_id?: string;
+    creator?: string | null;
   };
   sign_before?: string;
+  requested_close_at?: string;
   rules_markdown: string;
   description?: string | null;
   metadata_digest?: string | null;
@@ -32,7 +34,11 @@ type PublicRequest = {
     question?: string;
     observation?: { at?: string; mode?: string; max_delay?: string };
     sources?: { id: string; tool: string }[];
+    decision_kind?: string;
+    decide?: { kind?: string; op?: string; value?: string };
+    outcome_map?: Record<string, string>;
   };
+  resolver_sha256?: string | null;
   result?: Record<string, any>;
   network: {
     networkId: "testnet" | "mainnet";
@@ -203,10 +209,61 @@ function renderRules(root: HTMLElement, text: string) {
 }
 function setDoc(textId: string, text: string | null | undefined) {
   const box = document.getElementById(textId)!;
-  const section = box.closest(".doc") as HTMLElement;
   if (text?.trim()) renderRules(box, text);
   else box.replaceChildren();
-  section.hidden = !text?.trim();
+  const card = document.getElementById(`${textId}-card`);
+  if (card) card.hidden = !text?.trim();
+}
+function setPill(phase: string, text: string) {
+  document.getElementById("pill")!.dataset.phase = phase;
+  document.getElementById("pill-text")!.textContent = text;
+}
+let creatorNode: HTMLElement | null = null;
+function setCreator(account?: string) {
+  if (creatorNode) creatorNode.textContent = account || "your wallet";
+  if (creatorNode) creatorNode.classList.toggle("dim", !account);
+}
+// Noa's palette: teal/rose for a Yes/No pair, slot colours by position otherwise.
+const SLOT = ["#EF9F27", "#378ADD", "#1D9E75", "#7F77DD"];
+const OPS: Record<string, string> = { ">=": "≥", ">": ">", "<=": "≤", "<": "<" };
+function winText(name: string, s?: PublicRequest["spec_summary"]) {
+  const map = s?.outcome_map;
+  if (!map) return "";
+  const keys = Object.keys(map);
+  const key = keys.find((k) => map[k] === name);
+  if (s?.decide?.kind === "threshold") {
+    if (key === "true")
+      return `if value ${OPS[s.decide.op ?? ""] ?? s.decide.op} ${s.decide.value}`;
+    if (key === "false") return "otherwise";
+  } else if (s?.decide?.kind === "text_judge") {
+    if (key === "yes") return "if the jurors say yes";
+    if (key === "no") return "otherwise";
+  }
+  return "";
+}
+function renderOutcomes(
+  names: string[],
+  s?: PublicRequest["spec_summary"],
+) {
+  const list = document.getElementById("olist")!;
+  list.replaceChildren();
+  const heading = document.getElementById("outcomes-h")!;
+  heading.textContent = `Outcomes · ${names.length}`;
+  names.forEach((name, i) => {
+    const li = el("li", "orow");
+    const dot = el("span", "dot");
+    dot.style.background =
+      names.length === 2
+        ? i === 0
+          ? "#1D9E75"
+          : "#D4537E"
+        : (SLOT[i] ?? "#888780");
+    const label = el("span", "oname", name);
+    li.append(dot, label);
+    const win = winText(name, s);
+    if (win) li.append(el("span", "owin", win));
+    list.append(li);
+  });
 }
 function showResult(data: Record<string, any>) {
   result.replaceChildren();
@@ -345,6 +402,8 @@ async function main() {
   } catch (error) {
     details.replaceChildren();
     details.removeAttribute("aria-busy");
+    document.getElementById("layout")!.classList.add("solo");
+    setPill("expired", (error as Error).message.includes("expired") ? "Expired" : "Not found");
     if ((error as Error).message.includes("expired"))
       setStatus(
         "This signing link has expired. Ask your AI agent for a new one.",
@@ -380,11 +439,64 @@ async function main() {
   details.replaceChildren();
   details.removeAttribute("aria-busy");
   const summary = request.spec_summary;
-  const question = summary?.question;
-  if (question) term("Question", question);
-  term("Outcomes", words(request.params.outcomes));
-  const decision = decisionLine(request.rules_markdown);
-  if (decision) term("How it resolves", decision);
+  const phase: [string, string] =
+    request.status === "pending"
+      ? ["draft", "Draft · awaiting signature"]
+      : request.status === "completed"
+        ? ["created", "Created"]
+        : ["expired", "Expired"];
+  setPill(...phase);
+  const closeAt = request.requested_close_at ?? summary?.observation?.at;
+  if (closeAt) {
+    const m = document.getElementById("m-close")!;
+    m.lastElementChild!.textContent = `Closes ${formatUtc(closeAt)}`;
+    m.hidden = false;
+  }
+  const token = request.params.token_id || "NPOINT";
+  {
+    const m = document.getElementById("m-stake")!;
+    m.firstElementChild!.textContent = `${request.params.stake} ${token} stake`;
+    m.hidden = false;
+  }
+  renderOutcomes(request.params.outcomes, summary);
+  const plines = document.getElementById("plines");
+  if (plines) {
+    const stake = el("span");
+    stake.append(
+      el("strong", undefined, request.params.stake),
+      el("span", "dim", ` ${token}`),
+    );
+    term("Stake", stake, plines);
+    if (request.sign_before && request.status === "pending")
+      term("Sign before", timeNode(request.sign_before, true), plines);
+  }
+  // Footer rows, Noa style: creator, resolver, sources, observation time.
+  creatorNode = el("span");
+  creatorNode.className = "mono";
+  setCreator(request.params.creator ?? undefined);
+  term("Creator", creatorNode);
+  {
+    const by = el("span", "resolver");
+    const link = el("a", "mono", request.network.courtContract);
+    link.href = `https://${request.network.networkId}.nearblocks.io/address/${encodeURIComponent(request.network.courtContract)}`;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    by.append(link, " ", el("span", "badge", "TEE"));
+    const sub = el("span", "sub2");
+    sub.append("Noa Court on OutLayer TEE · verifiable WASM resolver");
+    const h = request.resolver_sha256;
+    if (h) {
+      const short = h.replace(/^sha256:/, "");
+      sub.append(` (sha256:${short.slice(0, 8)}…${short.slice(-4)})`);
+    }
+    if (summary?.decision_kind === "text_judge")
+      sub.append(" + 3 NEAR AI jurors");
+    by.append(sub);
+    term("Resolver", by);
+    (document.getElementById("how") as HTMLElement).hidden = false;
+  }
+  if (summary?.sources?.length)
+    term("Sources", summary.sources.map((x) => x.id).join(", "));
   const observation = summary?.observation;
   if (observation?.at) {
     const wrap = el("span");
@@ -396,23 +508,6 @@ async function main() {
     if (bits.length) wrap.append(el("span", "dim", ` · ${bits.join(", ")}`));
     term("Observed at", wrap);
   }
-  if (summary?.sources?.length) {
-    const list = el("ul", "sources");
-    for (const source of summary.sources) {
-      const li = el("li", undefined, source.id);
-      li.append(el("span", "dim", ` ${source.tool}`));
-      list.append(li);
-    }
-    term("Sources", list);
-  }
-  const stake = el("span");
-  stake.append(
-    el("strong", undefined, request.params.stake),
-    el("span", "dim", ` ${request.params.token_id || "NPOINT"}`),
-  );
-  term("Stake", stake);
-  if (request.sign_before && request.status === "pending")
-    term("Sign before", timeNode(request.sign_before, true));
   const verifyRows = document.getElementById("verify-rows")!;
   if (request.spec_hash)
     term("Spec hash", copyable(request.spec_hash), verifyRows);
@@ -423,18 +518,13 @@ async function main() {
   // Display only: when the frozen description equals the rules, show the text once.
   const rawRules = document.getElementById("rules-raw")!;
   rawRules.textContent = request.rules_markdown;
-  if (request.description === request.rules_markdown) {
-    document.getElementById("rules-title")!.textContent = "Resolution rules";
-    setDoc("description", null);
-    setDoc("rules", request.rules_markdown);
-  } else {
-    document.getElementById("rules-title")!.textContent = "Resolution rules";
-    setDoc(
-      "description",
-      request.description ?? "(no reviewed description: legacy request)",
-    );
-    setDoc("rules", request.rules_markdown);
-  }
+  const sameText = request.description === request.rules_markdown;
+  const desc = sameText
+    ? null
+    : (request.description ?? "(no reviewed description: legacy request)");
+  setDoc("description", desc);
+  document.getElementById("rules-title")!.hidden = !desc;
+  setDoc("rules", request.rules_markdown);
   const qr = document.getElementById("qr") as HTMLImageElement | null;
   if (qr && request.status === "pending") {
     try {
@@ -541,11 +631,14 @@ async function main() {
     accounts = await wallet.getAccounts();
     accountId = activeAccount();
     if (!accountId) throw new Error("Wallet returned no account");
+    setCreator(accountId);
     return accountId;
   }
   const onCompleted = (data: Record<string, any>) => {
     showResult(data);
     button?.remove();
+    document.querySelector(".act")?.remove();
+    setPill("created", "Created");
     setStatus("Signed and confirmed on-chain.", "ok");
     // Refresh the server-side publication view (payload needs the trusted market id).
     return getJson(`/api/sign/${encodeURIComponent(id)}`)
@@ -566,10 +659,12 @@ async function main() {
     const onSignOut = () => {
       // Account switch/sign-out: discard the Noa session.
       accounts = [];
+      setCreator(request.params.creator ?? undefined);
       session = null;
     };
     connector.on("wallet:signIn", (event: any) => {
       accounts = event.accounts ?? [];
+      setCreator(activeAccount() ?? request.params.creator ?? undefined);
       if (session && session.accountId !== activeAccount()) session = null;
     });
     connector.on("wallet:signOut", onSignOut);
